@@ -3,48 +3,75 @@ import os
 import threading
 import time
 
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from transformers import AutoTokenizer, MarianMTModel
+from transformers.generation.stopping_criteria import StoppingCriteria
 import torch
+
+from applog import log
 
 MODEL_NAME = "Helsinki-NLP/opus-mt-tc-big-en-lt"
 IDLE_SECONDS = 180
 
 _tokenizer = None
 _model = None
-_loading_tokenizer = False
 _ready = False
 _last_used = 0
 _in_use = 0
 _model_lock = threading.Lock()
 _idle_watcher_started = False
+_cancel_event = threading.Event()
+_ready_event = threading.Event()
+
+
+class _CancelCriteria(StoppingCriteria):
+    def __call__(self, input_ids, scores, **kwargs):
+        return _cancel_event.is_set()
+
+
+def is_cancelled():
+    return _cancel_event.is_set()
+
+
+def cancel():
+    _cancel_event.set()
+
+
+def reset_cancel():
+    _cancel_event.clear()
 
 
 def is_ready():
     return _ready and _model is not None
 
 
-def is_tokenizer_ready():
-    return _ready
-
-
-def ensure_async():
-    global _loading_tokenizer
-    if _tokenizer is not None or _loading_tokenizer:
-        return
-    _loading_tokenizer = True
-    threading.Thread(target=_load_tokenizer, daemon=True).start()
+def is_downloaded():
+    """Return True if the model files already exist in the HF cache."""
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        cache_dir = os.path.join(HF_HUB_CACHE, 'models--' + MODEL_NAME.replace('/', '--'))
+        snapshots = os.path.join(cache_dir, 'snapshots')
+        if not os.path.isdir(snapshots):
+            return False
+        for rev in os.listdir(snapshots):
+            rev_dir = os.path.join(snapshots, rev)
+            if os.path.isdir(rev_dir):
+                for fname in ('model.safetensors', 'pytorch_model.bin', 'pytorch_model.bin.index.json'):
+                    if os.path.isfile(os.path.join(rev_dir, fname)):
+                        return True
+        return False
+    except Exception:
+        return False
 
 
 def _load_tokenizer():
-    global _tokenizer, _ready, _loading_tokenizer
+    global _tokenizer, _ready
     try:
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         _ready = True
     except Exception as e:
-        print(f"[QuickTranslate] Klaida kraunant tokenizer: {e}")
-    _loading_tokenizer = False
+        print(f"[Selate] Klaida kraunant tokenizer: {e}")
 
 
 def _load_model():
@@ -53,9 +80,10 @@ def _load_model():
         torch.set_num_threads(2)
         _model = MarianMTModel.from_pretrained(MODEL_NAME, low_cpu_mem_usage=True)
         _model.eval()
+        log(f'model loaded on thread {threading.get_ident()}')
         return True
     except Exception as e:
-        print(f"[QuickTranslate] Klaida kraunant model: {e}")
+        log(f'model load error: {e!r}')
         return False
 
 
@@ -83,30 +111,85 @@ def _start_idle_watcher():
     t.start()
 
 
+def preload():
+    threading.Thread(target=_preload_worker, daemon=True).start()
+
+
+def _preload_worker():
+    try:
+        log(f'preload: start thread={threading.get_ident()}')
+        if _tokenizer is None:
+            _load_tokenizer()
+        with _model_lock:
+            if _model is None:
+                _load_model()
+        _ready_event.set()
+        log(f'preload: done ready={is_ready()}')
+    except Exception as e:
+        log(f'preload error: {e!r}')
+        _ready_event.set()
+
+
 def translate(text):
     global _last_used, _in_use
 
+    if is_cancelled():
+        return None
+
+    while not _ready_event.is_set():
+        if is_cancelled():
+            return None
+        _ready_event.wait(timeout=0.2)
+    if is_cancelled():
+        return None
+
     if _tokenizer is None:
-        _load_tokenizer()
-        if _tokenizer is None:
-            return "[Klaida] modelis neįdiegtas"
+        return "[Klaida] modelis neįdiegtas"
 
     with _model_lock:
         if _model is None:
-            if not _load_model():
-                return "[Klaida] modelis neįkeltas"
+            return "[Klaida] modelis neįkeltas"
         _in_use += 1
 
     _last_used = time.time()
     _start_idle_watcher()
 
     try:
-        with torch.inference_mode():
-            batch = _tokenizer([text], return_tensors="pt", padding=True, truncation=True)
-            generated = _model.generate(**batch, max_length=512)
-            return _tokenizer.batch_decode(generated, skip_special_tokens=True)[0]
+        parts = text.split('\n')
+        translated_parts = []
+        for part in parts:
+            if is_cancelled():
+                return None
+            if not part.strip():
+                translated_parts.append('')
+                continue
+            result = _translate_single(part)
+            if result is None:
+                return None
+            translated_parts.append(result)
+        result = '\n'.join(translated_parts)
+        log(
+            f'translate ok ({threading.get_ident()}): '
+            f'input_len={len(text)} result_len={len(result)} result={result[:60]!r}'
+        )
+        return result
     except Exception as e:
+        log(f'translate error in translator: {e!r}')
         return f"[Klaida] {e}"
     finally:
         with _model_lock:
             _in_use -= 1
+
+
+def _translate_single(text):
+    with torch.inference_mode():
+        batch = _tokenizer([text], return_tensors="pt", padding=True, truncation=True)
+        generated = _model.generate(
+            **batch,
+            max_new_tokens=512,
+            num_beams=4,
+            no_repeat_ngram_size=4,
+            repetition_penalty=1.3,
+            stopping_criteria=[_CancelCriteria()],
+        )
+        return _tokenizer.batch_decode(generated, skip_special_tokens=True)[0]

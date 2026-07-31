@@ -4,7 +4,7 @@ import sys
 import winreg
 
 APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))
-CONFIG_DIR = os.path.join(APPDATA, 'QuickTranslate')
+CONFIG_DIR = os.path.join(APPDATA, 'Selate')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
 DEFAULT_CONFIG = {
@@ -33,7 +33,7 @@ def save(config):
 
 def _sync_startup(enabled):
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    name = "QuickTranslate"
+    name = "Selate"
     if enabled:
         path = _get_exe_path()
         if not path:

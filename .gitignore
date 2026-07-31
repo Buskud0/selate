@@ -7,3 +7,5 @@ build/
 .venv/
 venv/
 *.spec
+*.log
+@AutomationLog.txt
