@@ -60,11 +60,13 @@ def _load_icon():
 class TrayIcon:
     WM_TRAY = win32con.WM_USER + 20
 
-    def __init__(self, config, on_quit, on_toggle_copy, on_toggle_startup):
+    def __init__(self, config, on_quit, on_toggle_copy, on_toggle_startup, on_toggle_topmost, on_restart):
         self.config = config
         self.on_quit = on_quit
         self.on_toggle_copy = on_toggle_copy
         self.on_toggle_startup = on_toggle_startup
+        self.on_toggle_topmost = on_toggle_topmost
+        self.on_restart = on_restart
         self.on_box = None
         self.hwnd = None
         self._hook_handle = None
@@ -105,7 +107,7 @@ class TrayIcon:
             win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP,
             self.WM_TRAY,
             hicon,
-            "Selate (Ctrl + tempimas pele)"
+            "Selate (Ctrl + tempti pele)"
         )
         win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
 
@@ -183,8 +185,12 @@ class TrayIcon:
                 self.on_toggle_copy()
             elif cmd == 1002:
                 self.on_toggle_startup()
+            elif cmd == 1005:
+                self.on_toggle_topmost()
             elif cmd == 1003:
                 self.on_quit()
+            elif cmd == 1004:
+                self.on_restart()
             return 0
 
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
@@ -202,7 +208,13 @@ class TrayIcon:
             f_start |= win32con.MF_CHECKED
         win32gui.AppendMenu(menu, f_start, 1002, "Paleisti įjungiant sistemą")
 
+        f_top = win32con.MF_STRING
+        if self.config.get('always_on_top', True):
+            f_top |= win32con.MF_CHECKED
+        win32gui.AppendMenu(menu, f_top, 1005, "Visada viršuje")
+
         win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
+        win32gui.AppendMenu(menu, win32con.MF_STRING, 1004, "Restartuoti")
         win32gui.AppendMenu(menu, win32con.MF_STRING, 1003, "Išeiti")
 
         x, y = win32gui.GetCursorPos()

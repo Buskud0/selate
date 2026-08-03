@@ -1,5 +1,6 @@
 import os
 import queue
+import subprocess
 import threading
 import time
 
@@ -8,6 +9,21 @@ import win32event
 import winerror
 
 from applog import log, log_exception
+
+
+def _enable_dpi_awareness():
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            return
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+_enable_dpi_awareness()
 
 try:
     import torch
@@ -27,6 +43,20 @@ _box_queue = queue.Queue()
 _cancel_event = threading.Event()
 _translating = False
 _translating_lock = threading.Lock()
+
+_model_status = 'loading'
+_model_status_lock = threading.Lock()
+
+
+def _set_model_status(state):
+    global _model_status
+    with _model_status_lock:
+        _model_status = state
+
+
+def _get_model_status():
+    with _model_status_lock:
+        return _model_status
 
 
 def main():
@@ -50,21 +80,25 @@ def start_preload():
 def _preload_import():
     try:
         import translator
+        _set_model_status(
+            'initializing' if translator.is_downloaded() else 'downloading'
+        )
         translator.preload()
+        while not translator.is_ready():
+            time.sleep(0.5)
+        _set_model_status('ready')
+        log('startup: model ready')
     except Exception:
         log_exception('preload_import')
 
 
 def _model_status_text():
-    try:
-        import translator
-        if translator.is_ready():
-            return None
-        if translator.is_downloaded():
-            return 'Inicializuojamas vertimo modelis...'
-        return 'Atsiunčiamas vertimo modelis...'
-    except Exception:
-        return 'Atsiunčiamas vertimo modelis...'
+    return {
+        'loading': 'Atsiunčiamas vertimo modelis...',
+        'downloading': 'Atsiunčiamas vertimo modelis...',
+        'initializing': 'Inicializuojamas vertimo modelis...',
+        'ready': None,
+    }.get(_get_model_status(), 'Atsiunčiamas vertimo modelis...')
 
 
 _LOADING_TEXTS = ('Inicializuojamas vertimo modelis...', 'Atsiunčiamas vertimo modelis...')
@@ -73,7 +107,6 @@ _LOADING_TEXTS = ('Inicializuojamas vertimo modelis...', 'Atsiunčiamas vertimo 
 def _watch_model_loading():
     global _current_popup, _cover_visible
     while True:
-        time.sleep(0.5)
         text = _model_status_text()
         if text is None:
             with _translating_lock:
@@ -84,12 +117,16 @@ def _watch_model_loading():
                     log('startup: model ready, indicator hidden')
             return
         if _current_popup is None:
-            _current_popup = CoverPopup(on_hidden=cancel_work)
+            _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
             _current_popup.start()
         if not _cover_visible:
             _current_popup.show_status(text, None, None)
             _cover_visible = True
-            log('startup: model loading indicator shown')
+            log('startup: model loading indicator shown: ' + text)
+        elif _current_popup.current_text() != text:
+            _current_popup.show_status(text, None, None)
+            log('startup: indicator text updated: ' + text)
+        time.sleep(0.5)
 
 
 def ensure_single_instance():
@@ -109,9 +146,23 @@ def build_tray_icon(settings, mutex):
         on_quit=lambda: quit_app(tray, mutex),
         on_toggle_copy=lambda: toggle_setting(settings, 'copy_on_close'),
         on_toggle_startup=lambda: toggle_setting(settings, 'run_at_startup'),
+        on_toggle_topmost=lambda: toggle_topmost(settings),
+        on_restart=lambda: restart_app(tray, mutex),
     )
     tray.on_box = request_box
     return tray
+
+
+def toggle_topmost(settings):
+    settings['always_on_top'] = not settings.get('always_on_top', True)
+    config.save(settings)
+    apply_topmost()
+
+
+def apply_topmost():
+    global _current_popup
+    if _current_popup is not None:
+        _current_popup.set_topmost(config.load().get('always_on_top', True))
 
 
 def start_request_worker():
@@ -129,18 +180,32 @@ def _request_worker_loop():
             continue
         log(f'worker got: {box}')
         try:
+            if not _wait_for_model():
+                log('worker: model not ready and cancelled, box skipped')
+                continue
             _handle_box(*box)
         except Exception:
             log_exception('worker_loop')
 
 
-def request_box(x, y, width, height, end_x, end_y):
-    _cancel_event.clear()
+def _wait_for_model():
+    """Block until the translation model is ready, so queued translations do
+    not run while the model is still downloading/initializing. Runs on the
+    worker thread, never on the mouse-hook thread."""
     try:
         import translator
         translator.reset_cancel()
+        while not translator.is_ready():
+            if _cancel_event.is_set():
+                return False
+            time.sleep(0.2)
+        return True
     except Exception:
-        pass
+        return True
+
+
+def request_box(x, y, width, height, end_x, end_y):
+    _cancel_event.clear()
     _box_queue.queue.clear()
     _box_queue.put((int(x), int(y), int(width), int(height), int(end_x), int(end_y)))
     log(f'request_box ident={threading.get_ident()}: {(int(x), int(y), int(width), int(height), int(end_x), int(end_y))}')
@@ -215,7 +280,7 @@ def hide_popup():
 def show_cover():
     global _current_popup, _cover_visible
     if _current_popup is None:
-        _current_popup = CoverPopup(on_hidden=cancel_work)
+        _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
         _current_popup.start()
     _current_popup.cover(None)
     _cover_visible = True
@@ -230,6 +295,14 @@ def cancel_work():
         pass
     _box_queue.queue.clear()
     log('cancel: work cancelled')
+
+
+def handle_edited_text(text):
+    try:
+        clipboard.write_clipboard(text)
+        log('edited -> clipboard: ' + repr(text[:60]))
+    except Exception:
+        log_exception('edited_clipboard')
 
 
 def toggle_setting(settings, key):
@@ -249,6 +322,15 @@ def quit_app(tray, mutex):
     destroy_popup()
     tray.destroy()
     win32api.CloseHandle(mutex)
+    os._exit(0)
+
+
+def restart_app(tray, mutex):
+    destroy_popup()
+    tray.destroy()
+    win32api.CloseHandle(mutex)
+    import sys
+    subprocess.Popen([sys.executable, os.path.abspath(__file__)])
     os._exit(0)
 
 

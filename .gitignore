@@ -9,3 +9,4 @@ venv/
 *.spec
 *.log
 @AutomationLog.txt
+prompts.txt

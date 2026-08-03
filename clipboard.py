@@ -1,3 +1,4 @@
+import html
 import re
 import time
 
@@ -18,6 +19,10 @@ CF_HTML = wc.RegisterClipboardFormat('HTML Format')
 
 def read_clipboard():
     return _read()
+
+
+def write_clipboard(text):
+    _write(text)
 
 
 def get_selected_text():
@@ -118,7 +123,8 @@ def _write_rich(data):
             wc.OpenClipboard()
             try:
                 wc.EmptyClipboard()
-                wc.SetClipboardData(wc.CF_UNICODETEXT, data.get('text', ''))
+                if data.get('text'):
+                    wc.SetClipboardData(wc.CF_UNICODETEXT, data['text'])
                 if data.get('rtf'):
                     wc.SetClipboardData(CF_RTF, data['rtf'])
                 if data.get('html'):
@@ -139,11 +145,22 @@ def _decode_rich(data):
 def extract_format(data):
     """Parse rich clipboard data (from _read_rich) into a format dict."""
     raw = data.get('raw', '')
-    if isinstance(raw, str):
-        if raw.lstrip().startswith('{\\rtf'):
-            return _parse_rtf(raw)
-        return _parse_html(raw)
-    return None
+    if isinstance(raw, bytes):
+        raw = _decode_text(raw)
+    if not isinstance(raw, str):
+        return None
+    if raw.lstrip().startswith('{\\rtf'):
+        return _parse_rtf(raw)
+    return _parse_html(raw)
+
+
+def _decode_text(raw):
+    for enc in ('utf-8', 'cp1252'):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, AttributeError):
+            continue
+    return raw.decode('utf-8', 'replace')
 
 
 def _parse_rtf(rtf):
@@ -162,9 +179,9 @@ def _parse_rtf(rtf):
     m = re.search(r'\\fs(\d+)', rtf)
     if m:
         fmt['size'] = int(m.group(1)) / 2.0
-    fmt['bold'] = bool(re.search(r'\\b\b', rtf))
-    fmt['italic'] = bool(re.search(r'\\i\b', rtf))
-    fmt['underline'] = bool(re.search(r'\\ul\b', rtf))
+    fmt['bold'] = bool(re.search(r'\\b(?![0-9])', rtf))
+    fmt['italic'] = bool(re.search(r'\\i(?![0-9])', rtf))
+    fmt['underline'] = bool(re.search(r'\\ul(?![0-9])', rtf))
     return fmt
 
 
@@ -180,7 +197,10 @@ def _parse_html(html):
         m = re.search(r"font-size:\s*(\d+(?:\.\d+)?)px", html)
         if m:
             fmt['size'] = float(m.group(1)) * 0.75
-    fmt['bold'] = bool(re.search(r'<(?:b|strong)\b', html, re.I))
-    fmt['italic'] = bool(re.search(r'<(?:i|em)\b', html, re.I))
-    fmt['underline'] = bool(re.search(r'<(?:u|ins)\b', html, re.I))
+    fmt['bold'] = bool(re.search(
+        r'<(?:b|strong)\b|font-weight\s*:\s*(?:bold|bolder|[6-9]00)', html, re.I))
+    fmt['italic'] = bool(re.search(
+        r'<(?:i|em)\b|font-style\s*:\s*italic', html, re.I))
+    fmt['underline'] = bool(re.search(
+        r'<(?:u|ins)\b|text-decoration\s*:\s*underline', html, re.I))
     return fmt

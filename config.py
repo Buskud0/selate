@@ -9,7 +9,8 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
 DEFAULT_CONFIG = {
     'copy_on_close': True,
-    'run_at_startup': False
+    'run_at_startup': False,
+    'always_on_top': True,
 }
 
 

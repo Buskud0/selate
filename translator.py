@@ -22,7 +22,6 @@ _in_use = 0
 _model_lock = threading.Lock()
 _idle_watcher_started = False
 _cancel_event = threading.Event()
-_ready_event = threading.Event()
 
 
 class _CancelCriteria(StoppingCriteria):
@@ -77,7 +76,7 @@ def _load_tokenizer():
 def _load_model():
     global _model
     try:
-        torch.set_num_threads(2)
+        torch.set_num_threads(min((os.cpu_count() or 4), 8))
         _model = MarianMTModel.from_pretrained(MODEL_NAME, low_cpu_mem_usage=True)
         _model.eval()
         log(f'model loaded on thread {threading.get_ident()}')
@@ -123,23 +122,14 @@ def _preload_worker():
         with _model_lock:
             if _model is None:
                 _load_model()
-        _ready_event.set()
         log(f'preload: done ready={is_ready()}')
     except Exception as e:
         log(f'preload error: {e!r}')
-        _ready_event.set()
 
 
 def translate(text):
     global _last_used, _in_use
 
-    if is_cancelled():
-        return None
-
-    while not _ready_event.is_set():
-        if is_cancelled():
-            return None
-        _ready_event.wait(timeout=0.2)
     if is_cancelled():
         return None
 
@@ -187,7 +177,7 @@ def _translate_single(text):
         generated = _model.generate(
             **batch,
             max_new_tokens=512,
-            num_beams=4,
+            num_beams=2,
             no_repeat_ngram_size=4,
             repetition_penalty=1.3,
             stopping_criteria=[_CancelCriteria()],
