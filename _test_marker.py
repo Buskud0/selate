@@ -5,8 +5,12 @@ from transformers import AutoTokenizer, MarianMTModel
 
 MODEL_NAME = "Helsinki-NLP/opus-mt-tc-big-en-lt"
 
-tok = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = MarianMTModel.from_pretrained(MODEL_NAME, low_cpu_mem_usage=True)
+tok = AutoTokenizer.from_pretrained(MODEL_NAME, local_files_only=True)
+model = MarianMTModel.from_pretrained(
+    MODEL_NAME,
+    low_cpu_mem_usage=True,
+    local_files_only=True,
+)
 model.eval()
 
 tests = [

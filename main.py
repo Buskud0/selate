@@ -44,7 +44,7 @@ _cancel_event = threading.Event()
 _translating = False
 _translating_lock = threading.Lock()
 
-_model_status = 'loading'
+_model_status = 'checking'
 _model_status_lock = threading.Lock()
 
 
@@ -85,6 +85,10 @@ def _preload_import():
         )
         translator.preload()
         while not translator.is_ready():
+            if translator.load_failed():
+                _set_model_status('error')
+                log('startup: model initialization failed')
+                return
             time.sleep(0.5)
         _set_model_status('ready')
         log('startup: model ready')
@@ -93,15 +97,32 @@ def _preload_import():
 
 
 def _model_status_text():
+    if _get_model_status() == 'downloading':
+        try:
+            import translator
+            downloaded, total = translator.get_download_progress()
+            if total:
+                return (
+                    'Atsiunčiamas vertimo modelis... '
+                    f'{downloaded / 1024 / 1024:.0f} / {total / 1024 / 1024:.0f} MB'
+                )
+        except Exception:
+            pass
     return {
-        'loading': 'Atsiunčiamas vertimo modelis...',
+        'checking': 'Tikrinamas vertimo modelis...',
+        'loading': 'Tikrinamas vertimo modelis...',
         'downloading': 'Atsiunčiamas vertimo modelis...',
         'initializing': 'Inicializuojamas vertimo modelis...',
+        'error': 'Nepavyko inicializuoti vertimo modelio.',
         'ready': None,
     }.get(_get_model_status(), 'Atsiunčiamas vertimo modelis...')
 
 
-_LOADING_TEXTS = ('Inicializuojamas vertimo modelis...', 'Atsiunčiamas vertimo modelis...')
+_LOADING_TEXTS = (
+    'Tikrinamas vertimo modelis...',
+    'Inicializuojamas vertimo modelis...',
+    'Atsiunčiamas vertimo modelis...',
+)
 
 
 def _watch_model_loading():
@@ -112,9 +133,21 @@ def _watch_model_loading():
             with _translating_lock:
                 busy = _translating
             if not busy:
-                if _current_popup is not None and _current_popup.current_text() in _LOADING_TEXTS:
-                    hide_popup()
-                    log('startup: model ready, indicator hidden')
+                if _current_popup is not None:
+                    current_text = _current_popup.current_text()
+                    if (
+                        current_text in _LOADING_TEXTS
+                        or current_text.startswith('Atsiunčiamas vertimo modelis...')
+                    ):
+                        hide_popup()
+                        log('startup: model ready, indicator hidden')
+            return
+        if _get_model_status() == 'error':
+            if _current_popup is None:
+                _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
+                _current_popup.start()
+            _current_popup.show_status(text, None, None)
+            log('startup: model initialization error shown')
             return
         if _current_popup is None:
             _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
@@ -196,6 +229,8 @@ def _wait_for_model():
         import translator
         translator.reset_cancel()
         while not translator.is_ready():
+            if translator.load_failed():
+                return False
             if _cancel_event.is_set():
                 return False
             time.sleep(0.2)

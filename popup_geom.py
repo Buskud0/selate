@@ -74,11 +74,13 @@ def _wrap_width(font, text, work):
 
 
 def _default_translation_size(font, text, work):
-    """Size the translated popup at DEFAULT_WIDTH, height fits the text."""
+    """Size the popup to its text, up to DEFAULT_WIDTH before wrapping."""
     left, top, right, bottom = work
     max_w = max(120, min(MAX_WIDTH, right - left - 32))
     max_h = max(80, bottom - top - 32)
-    width = _clamp(DEFAULT_WIDTH, MIN_WIDTH, max_w)
+    max_default_width = min(DEFAULT_WIDTH, max_w)
+    text_width = max((font.measure(line) for line in text.split('\n')), default=0)
+    width = _clamp(text_width + 2 * TEXT_PADDING, MIN_WIDTH, max_default_width)
     wrap = max(1, width - 2 * TEXT_PADDING)
     _, full_height = _size_for_text(text, font, TEXT_PADDING, wrap)
     height = _clamp(full_height, MIN_HEIGHT, max_h)
