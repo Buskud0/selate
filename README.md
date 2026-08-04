@@ -13,7 +13,7 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 
 ## Pagrindinės funkcijos
 
-- Teksto pasirinkimas pelės pagalba naudojant Ctrl + vilkimas
+- Teksto pasirinkimas pelės pagalba (Ctrl + vilkimas)
 - Vertimo langas su perkėlimo, dydžio keitimo ir redagavimo galimybėmis
 - Integracija su sistemos dėklo piktograma
 - Vertimų istorija iš dėklo meniu
@@ -25,11 +25,11 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 
 ### 1 variantas: paleidimas iš paruošto vykdomojo failo
 
-Naujausia paruošta versija yra [dist/Selate.exe](dist/Selate.exe).
+Naujausia paruošta versija yra Releases skiltyje.
 
-1. Eikite į aplanką dist.
-2. Paleiskite failą Selate.exe.
-3. Pirmą kartą paleidus, programa gali atsisiųsti vertimo modelį. Tai gali užtrukti priklausomai nuo interneto ryšio.
+1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/).
+2. Atsisiųskite pagrindinį failą Selate.exe.
+3. Paleiskite programą
 
 ### 2 variantas: paleidimas iš šaltinio kodo
 
@@ -77,13 +77,6 @@ Dešiniuoju pelės mygtuku spustelėkite piktogramą dėkle, kad atidarytumėte 
 - vertimų istorija
 - programos perkrovimu arba išėjimu
 
-## Sparčiųjų klavišų ir valdymo būdai
-
-- Ctrl + vilkimas pele: pasirinkti tekstą vertimui
-- Dukart spustelėjimas lange: redaguoti vertimą
-- Ctrl + pelės ratukas: padidinti arba sumažinti teksto dydį
-- Dešiniuoju pelės mygtuku ant dėklo piktogramos: atidaryti meniu
-
 ## Nustatymai
 
 Nustatymai saugomi naudotojo profilyje, vietiniame programos duomenų aplanke.
@@ -94,7 +87,7 @@ Galima valdyti:
 - pranešimų parinktis apie modelio ir vertimo veiksmus
 - naudojimo instrukcijų rodymą
 
-Šiuos nustatymus galite keisti iš dėklo meniu.
+Šiuos nustatymus galite keisti iš system tray meniu.
 
 ## Reikalavimai ir palaikomos platformos
 
@@ -156,17 +149,9 @@ powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 - Pirmo paleidimo metu gali užtrukti, kol atsisiunčiamas vertimo modelis.
 - Programa yra skirta Windows sistemai ir priklauso nuo Windows specifinių API.
 - Vertimo kokybė ir greitis priklauso nuo modelio ir kompiuterio galimybių.
-- Kai kurios popup elgsenos gali būti tobulinamos ateityje.
 
 ## Ateities patobulinimai
 
 Galimi ateities patobulinimai:
 - papildomos kalbos
-- geresnis veikimas be interneto
 - patrauklesni popup animacijos ir stilius
-- daugiau vertimų istorijos valdymo galimybių
-- geresnė pakavimo ir diegimo patirtis
-
-## Licencija
-
-Kol kas licencija nepasirinkta. Jei planuojate platinti šį projektą viešai, rekomenduojama pridėti atitinkamą licenciją.
