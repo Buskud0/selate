@@ -29,15 +29,28 @@ HANDLE_COLOR = '#555555'
 ARC_STEPS = 6
 
 
-def _create_window(topmost=True):
+def _create_window(topmost=True, no_activate=False):
     window = tk.Tk()
     window.overrideredirect(True)
     window.attributes('-topmost', topmost)
     window.attributes('-alpha', WINDOW_ALPHA)
     window.attributes('-transparentcolor', MAGIC_COLOR)
     window.configure(bg=MAGIC_COLOR)
+    window.withdraw()
     _enable_blur(window)
+    if no_activate:
+        _disable_activate(window)
     return window
+
+
+def _disable_activate(window):
+    try:
+        hwnd = wintypes.HWND(window.winfo_id())
+        user32 = ctypes.WinDLL('user32', use_last_error=True)
+        style = user32.GetWindowLongW(hwnd, -20)
+        user32.SetWindowLongW(hwnd, -20, style | 0x08000000 | 0x00000020)
+    except Exception:
+        pass
 
 
 def _enable_blur(window):
@@ -70,8 +83,7 @@ def _enable_blur(window):
         )
         hwnd = wintypes.HWND(window.winfo_id())
         user32 = ctypes.WinDLL('user32', use_last_error=True)
-        ok = user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
-        log(f'blur enabled: ok={bool(ok)} err={ctypes.get_last_error()}')
+        user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
     except Exception as e:
         log(f'blur enable error: {e!r}')
 
@@ -88,29 +100,21 @@ def _create_canvas(window):
     return canvas
 
 
-def _make_font(master, size, fmt=None):
-    family = FONT_NAME
-    weight = 'normal'
-    slant = 'roman'
-    underline = 0
-    if fmt:
-        family = fmt.get('family') or FONT_NAME
-        weight = 'bold' if fmt.get('bold') else 'normal'
-        slant = 'italic' if fmt.get('italic') else 'roman'
-        underline = 1 if fmt.get('underline') else 0
+def _make_font(master, size):
     return tkfont.Font(
         root=master,
-        family=family,
+        family=FONT_NAME,
         size=size,
-        weight=weight,
-        slant=slant,
-        underline=underline,
+        weight='normal',
+        slant='roman',
+        underline=0,
     )
 
 
 def _draw_box(canvas, text, font, width, height, pos='center', grips=None):
+    """Draw the box and the text. Returns a list of (item, x, y) text items."""
     if canvas is None:
-        return None
+        return []
     canvas.delete('all')
     _rounded_rect(
         canvas, 1, 1, width - 1, height - 1, RADIUS,
@@ -118,25 +122,44 @@ def _draw_box(canvas, text, font, width, height, pos='center', grips=None):
     )
     _draw_corner_grips(canvas, width, height, grips)
     if not text:
-        return None
+        return []
     wrap_width = _text_wrap_width(font, text, width)
-    if pos == 'se':
-        x = width - TEXT_PADDING
-        justify = 'right'
-        anchor = 'ne'
-    else:
-        x = width // 2
-        justify = 'center'
-        anchor = 'n'
-    return canvas.create_text(
+    return _draw_plain_text(canvas, text, font, wrap_width)
+
+
+def _draw_plain_text(canvas, text, font, wrap_width):
+    x = TEXT_PADDING
+    iid = canvas.create_text(
         x, TEXT_PADDING,
-        anchor=anchor,
+        anchor='nw',
         text=text,
         font=font,
         fill=TEXT_FOREGROUND,
-        justify=justify,
+        justify='left',
         width=wrap_width,
     )
+    return [(iid, x, TEXT_PADDING)]
+
+
+def _measure_text(canvas, text, font, wrap_width):
+    """Return the real (w, h) of the wrapped text as Tk would render it."""
+    if not text:
+        return font.measure(''), font.metrics('linespace')
+    iid = canvas.create_text(
+        -10000, -10000,
+        anchor='nw',
+        text=text,
+        font=font,
+        width=wrap_width,
+    )
+    try:
+        bbox = canvas.bbox(iid)
+    except Exception:
+        bbox = None
+    canvas.delete(iid)
+    if bbox:
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    return font.measure(text), font.metrics('linespace')
 
 
 def _rounded_rect(canvas, x1, y1, x2, y2, r, **kwargs):

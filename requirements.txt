@@ -3,3 +3,4 @@ uiautomation>=2.0.29
 transformers>=4.30.0
 torch
 sentencepiece
+pyinstaller>=6.0

@@ -1,20 +1,17 @@
-import html
-import re
 import time
 
 import win32api
 import win32clipboard as wc
 import win32con
 
-RETRY_COUNT = 3
-RETRY_DELAY = 0.05
+RETRY_COUNT = 5
+RETRY_DELAY = 0.08
+COPY_POLL_ATTEMPTS = 10
+COPY_POLL_DELAY = 0.15
 CTRL = 0x11
 KEY_C = 0x43
 
 _MODIFIER_KEYS = (0x11, 0x10, 0x12, 0x5B)
-
-CF_RTF = wc.RegisterClipboardFormat('Rich Text Format')
-CF_HTML = wc.RegisterClipboardFormat('HTML Format')
 
 
 def read_clipboard():
@@ -26,17 +23,18 @@ def write_clipboard(text):
 
 
 def get_selected_text():
-    """Copy the current selection and return (text, format_info)."""
+    """Copy the current selection and return the selected text."""
     _release_all_modifiers()
     old_text = _read()
-    old_rich = _read_rich()
     _send_ctrl_c()
     text = _poll_for_change(old_text)
-    rich = _read_rich()
-    _restore(old_text, old_rich)
-    if not text and old_rich:
-        return old_text, old_rich
-    return text, rich
+    if text is None:
+        time.sleep(COPY_POLL_DELAY)
+        text = _read()
+        if text and text != old_text:
+            text = text.strip()
+    _restore(old_text)
+    return text
 
 
 def _release_all_modifiers():
@@ -55,19 +53,21 @@ def _send_ctrl_c():
 
 
 def _poll_for_change(old):
-    for _ in range(5):
+    for _ in range(COPY_POLL_ATTEMPTS):
         text = _read()
         if text and text != old:
             return text.strip()
-        time.sleep(0.1)
+        time.sleep(COPY_POLL_DELAY)
     return None
 
 
-def _restore(old_text, old_rich=None):
+def _restore(old_text):
     if old_text is not None:
         _write(old_text)
-        if old_rich:
-            _write_rich(old_rich)
+
+
+def _normalize_eol(text):
+    return text.replace('\r\n', '\n').replace('\r', '\n')
 
 
 def _read():
@@ -76,7 +76,8 @@ def _read():
             wc.OpenClipboard()
             try:
                 if wc.IsClipboardFormatAvailable(wc.CF_UNICODETEXT):
-                    return wc.GetClipboardData(wc.CF_UNICODETEXT)
+                    text = wc.GetClipboardData(wc.CF_UNICODETEXT)
+                    return _normalize_eol(text) if text else None
                 return None
             finally:
                 wc.CloseClipboard()
@@ -98,109 +99,3 @@ def _write(text):
         except Exception:
             time.sleep(RETRY_DELAY)
 
-
-def _read_rich():
-    """Read the clipboard's rich data (RTF or HTML) as a string, or None."""
-    for _ in range(RETRY_COUNT):
-        try:
-            wc.OpenClipboard()
-            try:
-                for cfid in (CF_RTF, CF_HTML):
-                    if wc.IsClipboardFormatAvailable(cfid):
-                        data = wc.GetClipboardData(cfid)
-                        return _decode_rich(data)
-                return None
-            finally:
-                wc.CloseClipboard()
-        except Exception:
-            time.sleep(RETRY_DELAY)
-    return None
-
-
-def _write_rich(data):
-    for _ in range(RETRY_COUNT):
-        try:
-            wc.OpenClipboard()
-            try:
-                wc.EmptyClipboard()
-                if data.get('text'):
-                    wc.SetClipboardData(wc.CF_UNICODETEXT, data['text'])
-                if data.get('rtf'):
-                    wc.SetClipboardData(CF_RTF, data['rtf'])
-                if data.get('html'):
-                    wc.SetClipboardData(CF_HTML, data['html'])
-            finally:
-                wc.CloseClipboard()
-            return
-        except Exception:
-            time.sleep(RETRY_DELAY)
-
-
-def _decode_rich(data):
-    if isinstance(data, bytes):
-        return {'raw': data, 'text': None, 'rtf': None, 'html': None}
-    return {'raw': data, 'text': None, 'rtf': None, 'html': None}
-
-
-def extract_format(data):
-    """Parse rich clipboard data (from _read_rich) into a format dict."""
-    raw = data.get('raw', '')
-    if isinstance(raw, bytes):
-        raw = _decode_text(raw)
-    if not isinstance(raw, str):
-        return None
-    if raw.lstrip().startswith('{\\rtf'):
-        return _parse_rtf(raw)
-    return _parse_html(raw)
-
-
-def _decode_text(raw):
-    for enc in ('utf-8', 'cp1252'):
-        try:
-            return raw.decode(enc)
-        except (UnicodeDecodeError, AttributeError):
-            continue
-    return raw.decode('utf-8', 'replace')
-
-
-def _parse_rtf(rtf):
-    fmt = {}
-    entries = re.findall(r'\{[^{}]*\\f\d+[^{}]*;}', rtf)
-    names = []
-    for entry in entries:
-        clean = entry.strip('{}')
-        tokens = re.split(r'\\[a-zA-Z]+\d*', clean)
-        if tokens:
-            name = tokens[-1].strip().rstrip(';').strip()
-            if name:
-                names.append(name)
-    if names:
-        fmt['family'] = names[0]
-    m = re.search(r'\\fs(\d+)', rtf)
-    if m:
-        fmt['size'] = int(m.group(1)) / 2.0
-    fmt['bold'] = bool(re.search(r'\\b(?![0-9])', rtf))
-    fmt['italic'] = bool(re.search(r'\\i(?![0-9])', rtf))
-    fmt['underline'] = bool(re.search(r'\\ul(?![0-9])', rtf))
-    return fmt
-
-
-def _parse_html(html):
-    fmt = {}
-    m = re.search(r"font-family:\s*([^;\"]+)", html)
-    if m:
-        fmt['family'] = m.group(1).strip().strip("'\"")
-    m = re.search(r"font-size:\s*(\d+(?:\.\d+)?)pt", html)
-    if m:
-        fmt['size'] = float(m.group(1))
-    else:
-        m = re.search(r"font-size:\s*(\d+(?:\.\d+)?)px", html)
-        if m:
-            fmt['size'] = float(m.group(1)) * 0.75
-    fmt['bold'] = bool(re.search(
-        r'<(?:b|strong)\b|font-weight\s*:\s*(?:bold|bolder|[6-9]00)', html, re.I))
-    fmt['italic'] = bool(re.search(
-        r'<(?:i|em)\b|font-style\s*:\s*italic', html, re.I))
-    fmt['underline'] = bool(re.search(
-        r'<(?:u|ins)\b|text-decoration\s*:\s*underline', html, re.I))
-    return fmt

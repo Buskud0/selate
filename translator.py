@@ -7,10 +7,24 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("DISABLE_TELEMETRY", "1")
 
+
+def _limit_cpu_threads():
+    n = os.cpu_count() or 4
+    return max(1, n // 2)
+
+
+os.environ.setdefault("RAYON_NUM_THREADS", str(_limit_cpu_threads()))
+
 from transformers import AutoTokenizer, MarianMTModel
 from transformers.generation.stopping_criteria import StoppingCriteria
 from huggingface_hub import snapshot_download
 import torch
+
+torch.set_num_threads(_limit_cpu_threads())
+try:
+    torch.set_num_interop_threads(_limit_cpu_threads())
+except Exception:
+    pass
 
 from applog import log
 
@@ -168,14 +182,13 @@ def _downloaded_model_bytes():
 def _load_model():
     global _model, _load_error
     try:
-        torch.set_num_threads(min((os.cpu_count() or 4), 8))
+        torch.set_num_threads(_limit_cpu_threads())
         _model = MarianMTModel.from_pretrained(
             MODEL_NAME,
             low_cpu_mem_usage=True,
             local_files_only=True,
         )
         _model.eval()
-        log(f'model loaded on thread {threading.get_ident()}')
         return True
     except Exception as e:
         _load_error = f'model load error: {e!r}'
@@ -213,7 +226,6 @@ def preload():
 
 def _preload_worker():
     try:
-        log(f'preload: start thread={threading.get_ident()}')
         if not is_downloaded():
             _download_model()
         if _tokenizer is None:
@@ -223,7 +235,6 @@ def _preload_worker():
             if _model is None:
                 if not _load_model():
                     return
-        log(f'preload: done ready={is_ready()}')
     except Exception as e:
         log(f'preload error: {e!r}')
 
@@ -259,10 +270,6 @@ def translate(text):
                 return None
             translated_parts.append(result)
         result = '\n'.join(translated_parts)
-        log(
-            f'translate ok ({threading.get_ident()}): '
-            f'input_len={len(text)} result_len={len(result)} result={result[:60]!r}'
-        )
         return result
     except Exception as e:
         log(f'translate error in translator: {e!r}')

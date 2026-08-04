@@ -9,6 +9,8 @@ SCROLL_STEP = 32
 CORNER = 16
 MIN_WIDTH = 80
 MIN_HEIGHT = 40
+EMPTY_POPUP_WIDTH = 70
+EMPTY_POPUP_HEIGHT = 40
 
 
 def _clamp(value, minimum, maximum):
@@ -30,7 +32,7 @@ def _corner_at(x, y, width, height):
 def _resize_cursor(mode):
     return {
         'nw': 'size_nw_se', 'se': 'size_nw_se',
-        'ne': 'size_nesw', 'sw': 'size_nesw',
+        'ne': 'size_ne_sw', 'sw': 'size_ne_sw',
         'n': 'size_ns', 's': 'size_ns',
         'e': 'size_we', 'w': 'size_we',
     }.get(mode, 'arrow')
@@ -90,7 +92,7 @@ def _default_translation_size(font, text, work):
 
 def _size_for_text(text, font, padding, wrap_width=None):
     if not text:
-        return 70, 40
+        return EMPTY_POPUP_WIDTH, EMPTY_POPUP_HEIGHT
     if wrap_width is None:
         wrap_width = min(MAX_WIDTH - 2 * padding, font.measure(text))
     wrap_width = max(1, wrap_width)

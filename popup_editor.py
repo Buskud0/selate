@@ -12,10 +12,9 @@ SELECT_BACKGROUND = '#aed0f5'
 class PopupEditor:
     """A tk.Text widget overlaid on the popup canvas for in-place editing."""
 
-    def __init__(self, window, initial_text, justify):
+    def __init__(self, window, initial_text):
         self._window = window
         self._initial_text = initial_text
-        self._justify = justify
         self._widget = None
         self.on_change = None
         self.on_commit = None
@@ -44,9 +43,6 @@ class PopupEditor:
         widget.place(x=2, y=2, width=width - 4, height=height - 4)
         widget.insert('1.0', self._initial_text)
         widget.edit_reset()
-        if self._justify != 'left':
-            widget.tag_configure('just', justify=self._justify)
-            widget.tag_add('just', '1.0', 'end')
         widget.tag_add('sel', '1.0', 'end-1c')
         widget.focus_set()
         widget.bind('<Return>', self._commit)
@@ -104,8 +100,6 @@ class PopupEditor:
     def _change(self, event=None):
         if self._widget is None:
             return
-        if self._justify != 'left':
-            self._widget.tag_add('just', '1.0', 'end')
         if self.on_change is not None:
             self.on_change(self.text())
 

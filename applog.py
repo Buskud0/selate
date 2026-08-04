@@ -2,7 +2,16 @@ import os
 import threading
 import traceback
 
-_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quicktranslate.log")
+import config
+
+
+def _log_path():
+    data_dir = config.get_data_dir()
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, "quicktranslate.log")
+
+
+_LOG_PATH = _log_path()
 _LOCK = threading.Lock()
 
 

@@ -1,31 +1,61 @@
 import json
 import os
 import sys
+import threading
 import winreg
 
-APPDATA = os.environ.get('APPDATA', os.path.expanduser('~'))
-CONFIG_DIR = os.path.join(APPDATA, 'Selate')
+
+def get_data_dir():
+    base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA') or os.path.expanduser('~')
+    return os.path.join(base, 'Selate')
+
+
+CONFIG_DIR = get_data_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
 
+STARTUP_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_REGISTRY_NAME = "Selate"
+
 DEFAULT_CONFIG = {
-    'copy_on_close': True,
     'run_at_startup': False,
     'always_on_top': True,
+    'notifications': True,
 }
+
+_cache = None
+_lock = threading.Lock()
 
 
 def load():
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return {**DEFAULT_CONFIG, **data}
-    except (FileNotFoundError, json.JSONDecodeError):
-        save(DEFAULT_CONFIG)
-        return DEFAULT_CONFIG.copy()
+    """Return the current settings merged over the defaults.
+
+    The result is cached in memory and refreshed on every save().
+    """
+    with _lock:
+        global _cache
+        if _cache is None:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    allowed = {k: v for k, v in data.items() if k in DEFAULT_CONFIG}
+                    _cache = {**DEFAULT_CONFIG, **allowed}
+            except (FileNotFoundError, json.JSONDecodeError):
+                _cache = dict(DEFAULT_CONFIG)
+                _write(_cache)
+        return dict(_cache)
 
 
 def save(config):
+    """Persist the given settings and update the in-memory cache."""
+    with _lock:
+        global _cache
+        normalized = {k: v for k, v in config.items() if k in DEFAULT_CONFIG}
+        _cache = {**DEFAULT_CONFIG, **normalized}
+        _write(_cache)
+
+
+def _write(config):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
@@ -33,26 +63,26 @@ def save(config):
 
 
 def _sync_startup(enabled):
-    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-    name = "Selate"
     if enabled:
         path = _get_exe_path()
         if not path:
             return
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, path)
-            winreg.CloseKey(key)
-        except Exception:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.SetValueEx(
+                    key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, path
+                )
+        except OSError:
             pass
     else:
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-            winreg.DeleteValue(key, name)
-            winreg.CloseKey(key)
-        except FileNotFoundError:
-            pass
-        except Exception:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                winreg.DeleteValue(key, STARTUP_REGISTRY_NAME)
+        except OSError:
             pass
 
 

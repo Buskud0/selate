@@ -1,6 +1,7 @@
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 
@@ -25,11 +26,6 @@ def _enable_dpi_awareness():
 
 _enable_dpi_awareness()
 
-try:
-    import torch
-except Exception:
-    log_exception('torch_import')
-
 import clipboard
 import config
 from popup import CoverPopup
@@ -43,9 +39,24 @@ _box_queue = queue.Queue()
 _cancel_event = threading.Event()
 _translating = False
 _translating_lock = threading.Lock()
+_history = []
+_history_lock = threading.Lock()
+_current_history_index = 0
+HISTORY_MAX = 3
+_active_hint = None
+_active_hint_lock = threading.Lock()
+_translator_mod = None
 
 _model_status = 'checking'
 _model_status_lock = threading.Lock()
+
+MODEL_STATUS_POLL_SECONDS = 0.5
+MODEL_WAIT_POLL_SECONDS = 0.2
+HIDE_POPUP_DELAY_SECONDS = 0.1
+TOAST_DURATION_SECONDS = 2.0
+SELECT_HINT_TEXT = 'Žymima...'
+TRANSLATING_TEXT = 'Verčiama...'
+HISTORY_NOT_FOUND_TEXT = 'Vertimas #{num} nerastas'
 
 
 def _set_model_status(state):
@@ -64,6 +75,7 @@ def main():
     if mutex is None:
         return
     settings = config.load()
+    ensure_hint_popup()
     start_preload()
     start_request_worker()
     tray = build_tray_icon(settings, mutex)
@@ -73,34 +85,40 @@ def main():
 
 def start_preload():
     threading.Thread(target=_preload_import, daemon=True).start()
-    log('preload started')
     threading.Thread(target=_watch_model_loading, daemon=True).start()
 
 
 def _preload_import():
     try:
-        import translator
+        mod = _get_translator()
         _set_model_status(
-            'initializing' if translator.is_downloaded() else 'downloading'
+            'initializing' if mod.is_downloaded() else 'downloading'
         )
-        translator.preload()
-        while not translator.is_ready():
-            if translator.load_failed():
+        mod.preload()
+        while not mod.is_ready():
+            if mod.load_failed():
                 _set_model_status('error')
                 log('startup: model initialization failed')
                 return
-            time.sleep(0.5)
+            time.sleep(MODEL_STATUS_POLL_SECONDS)
         _set_model_status('ready')
-        log('startup: model ready')
     except Exception:
         log_exception('preload_import')
 
 
+def _get_translator():
+    global _translator_mod
+    mod = _translator_mod
+    if mod is None:
+        import translator
+        mod = _translator_mod = translator
+    return mod
+
+
 def _model_status_text():
-    if _get_model_status() == 'downloading':
+    if _get_model_status() == 'downloading' and _translator_mod is not None:
         try:
-            import translator
-            downloaded, total = translator.get_download_progress()
+            downloaded, total = _translator_mod.get_download_progress()
             if total:
                 return (
                     'Atsiunčiamas vertimo modelis... '
@@ -128,6 +146,11 @@ _LOADING_TEXTS = (
 def _watch_model_loading():
     global _current_popup, _cover_visible
     while True:
+        if not notifications_enabled():
+            if _cover_visible and _current_popup is not None and _current_popup.current_text() in _LOADING_TEXTS:
+                hide_popup()
+            time.sleep(MODEL_STATUS_POLL_SECONDS)
+            continue
         text = _model_status_text()
         if text is None:
             with _translating_lock:
@@ -140,26 +163,19 @@ def _watch_model_loading():
                         or current_text.startswith('Atsiunčiamas vertimo modelis...')
                     ):
                         hide_popup()
-                        log('startup: model ready, indicator hidden')
             return
         if _get_model_status() == 'error':
-            if _current_popup is None:
-                _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
-                _current_popup.start()
+            _ensure_popup()
             _current_popup.show_status(text, None, None)
             log('startup: model initialization error shown')
             return
-        if _current_popup is None:
-            _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
-            _current_popup.start()
+        _ensure_popup()
         if not _cover_visible:
             _current_popup.show_status(text, None, None)
             _cover_visible = True
-            log('startup: model loading indicator shown: ' + text)
         elif _current_popup.current_text() != text:
             _current_popup.show_status(text, None, None)
-            log('startup: indicator text updated: ' + text)
-        time.sleep(0.5)
+        time.sleep(MODEL_STATUS_POLL_SECONDS)
 
 
 def ensure_single_instance():
@@ -177,13 +193,51 @@ def build_tray_icon(settings, mutex):
     tray = TrayIcon(
         settings,
         on_quit=lambda: quit_app(tray, mutex),
-        on_toggle_copy=lambda: toggle_setting(settings, 'copy_on_close'),
         on_toggle_startup=lambda: toggle_setting(settings, 'run_at_startup'),
         on_toggle_topmost=lambda: toggle_topmost(settings),
+        on_toggle_notifications=lambda: toggle_setting(settings, 'notifications'),
+        on_history=handle_history,
+        get_history=history_snapshot,
         on_restart=lambda: restart_app(tray, mutex),
+        history_size=HISTORY_MAX,
     )
     tray.on_box = request_box
+    tray.on_select_start = show_select_hint
+    tray.on_select_end = hide_select_hint
     return tray
+
+
+def ensure_hint_popup():
+    global _active_hint
+    with _active_hint_lock:
+        if _active_hint is None:
+            _active_hint = CoverPopup(no_activate=True)
+            _active_hint.start()
+        popup = _active_hint
+    popup.wait_ready(2.0)
+
+
+def show_select_hint():
+    ensure_hint_popup()
+    with _active_hint_lock:
+        popup = _active_hint
+    popup.show_status(SELECT_HINT_TEXT, None, None)
+
+
+def hide_select_hint():
+    with _active_hint_lock:
+        popup = _active_hint
+    if popup is not None:
+        popup.hide(silent=True)
+
+
+def history_snapshot():
+    with _history_lock:
+        return list(_history[:HISTORY_MAX])
+
+
+def notifications_enabled():
+    return config.load().get('notifications', True)
 
 
 def toggle_topmost(settings):
@@ -199,22 +253,18 @@ def apply_topmost():
 
 
 def start_request_worker():
-    t = threading.Thread(target=_request_worker_loop, daemon=True)
-    t.start()
-    log(f'worker thread started: id={t.ident} alive={t.is_alive()}')
+    threading.Thread(target=_request_worker_loop, daemon=True).start()
 
 
 def _request_worker_loop():
-    log(f'worker loop running ident={threading.get_ident()}')
     while True:
         try:
             box = _box_queue.get(timeout=1)
         except queue.Empty:
             continue
-        log(f'worker got: {box}')
         try:
+            _cancel_event.clear()
             if not _wait_for_model():
-                log('worker: model not ready and cancelled, box skipped')
                 continue
             _handle_box(*box)
         except Exception:
@@ -226,59 +276,48 @@ def _wait_for_model():
     not run while the model is still downloading/initializing. Runs on the
     worker thread, never on the mouse-hook thread."""
     try:
-        import translator
-        translator.reset_cancel()
-        while not translator.is_ready():
-            if translator.load_failed():
+        mod = _get_translator()
+        mod.reset_cancel()
+        while not mod.is_ready():
+            if mod.load_failed():
                 return False
             if _cancel_event.is_set():
                 return False
-            time.sleep(0.2)
+            time.sleep(MODEL_WAIT_POLL_SECONDS)
         return True
     except Exception:
         return True
 
 
 def request_box(x, y, width, height, end_x, end_y):
-    _cancel_event.clear()
+    _cancel_translation()
     _box_queue.queue.clear()
     _box_queue.put((int(x), int(y), int(width), int(height), int(end_x), int(end_y)))
-    log(f'request_box ident={threading.get_ident()}: {(int(x), int(y), int(width), int(height), int(end_x), int(end_y))}')
 
 
 def _handle_box(x, y, width, height, end_x, end_y):
     old = clipboard.read_clipboard()
-    log('step: clipboard -> ' + repr(old[:60]) if old else 'step: clipboard -> None')
-    picked = clipboard.get_selected_text()
-    text, rich = picked if isinstance(picked, tuple) else (picked, None)
-    log('step: after ctrl+c -> ' + repr(text[:60]) if text else 'step: after ctrl+c -> None')
+    text = clipboard.get_selected_text()
     if not text:
         text = old
-        log('step: fallback -> ' + repr(text[:60]) if text else 'step: fallback -> None')
     if not text:
         return
-    fmt = None
-    if rich:
-        try:
-            fmt = clipboard.extract_format(rich)
-            log(f'step: format -> {fmt}')
-        except Exception:
-            log_exception('format_extract')
     hide_popup()
-    show_cover()
-    log('step: cover shown')
-    _show_placeholder(end_x, end_y)
+    if notifications_enabled():
+        show_cover()
+        _show_placeholder(end_x, end_y)
+    else:
+        _ensure_popup()
     with _translating_lock:
         global _translating
         _translating = True
     try:
         translated = _translate_text(text)
-        log('step: translated -> ' + repr(translated[:60]) if translated else 'step: translated -> None')
         if not translated or _cancel_event.is_set():
             return
-        if _current_popup is not None and _cover_visible:
-            _current_popup.show_translation(translated, None, fmt, (end_x, end_y))
-            log('step: translation shown')
+        if _current_popup is not None:
+            _current_popup.show_translation(translated, None, (end_x, end_y))
+            _push_history(translated)
     finally:
         with _translating_lock:
             _translating = False
@@ -286,8 +325,7 @@ def _handle_box(x, y, width, height, end_x, end_y):
 
 def _translate_text(text):
     try:
-        import translator
-        translated = translator.translate(text)
+        translated = _get_translator().translate(text)
     except Exception as e:
         log(f'translate error: {e!r}')
         return None
@@ -299,8 +337,7 @@ def _translate_text(text):
 def _show_placeholder(end_x, end_y):
     if _current_popup is None or not _cover_visible:
         return
-    _current_popup.show_status('Verčiama...', None, (end_x, end_y))
-    log('step: placeholder -> Verčiama...')
+    _current_popup.show_status(TRANSLATING_TEXT, None, (end_x, end_y))
 
 
 def hide_popup():
@@ -309,39 +346,94 @@ def hide_popup():
         return
     _current_popup.hide(silent=True)
     _cover_visible = False
-    time.sleep(0.1)
+    time.sleep(HIDE_POPUP_DELAY_SECONDS)
 
 
 def show_cover():
     global _current_popup, _cover_visible
-    if _current_popup is None:
-        _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
-        _current_popup.start()
+    _ensure_popup()
     _current_popup.cover(None)
     _cover_visible = True
 
 
-def cancel_work():
+def _ensure_popup():
+    global _current_popup
+    if _current_popup is None:
+        _current_popup = CoverPopup(on_hidden=cancel_work, on_edited=handle_edited_text)
+        _current_popup.on_history = handle_history
+        _current_popup.start()
+
+
+def _cancel_translation():
     _cancel_event.set()
-    try:
-        import translator
-        translator.cancel()
-    except Exception:
-        pass
+    mod = _translator_mod
+    if mod is not None:
+        try:
+            mod.cancel()
+        except Exception:
+            pass
+
+
+def cancel_work():
+    _cancel_translation()
     _box_queue.queue.clear()
-    log('cancel: work cancelled')
 
 
 def handle_edited_text(text):
-    try:
-        clipboard.write_clipboard(text)
-        log('edited -> clipboard: ' + repr(text[:60]))
-    except Exception:
-        log_exception('edited_clipboard')
+    _update_current_history(text)
+
+
+def _push_history(text):
+    global _current_history_index
+    _current_history_index = 0
+    with _history_lock:
+        if _history and _history[0] == text:
+            return
+        _history.insert(0, text)
+        del _history[HISTORY_MAX:]
+
+
+def _update_current_history(text):
+    global _current_history_index
+    with _history_lock:
+        if not _history:
+            return
+        idx = _current_history_index
+        if idx < len(_history) and _history[idx] != text:
+            _history[idx] = text
+
+
+def handle_history(num):
+    global _current_history_index
+    if num < 1 or num > HISTORY_MAX:
+        return
+    with _history_lock:
+        if len(_history) < num:
+            text = None
+        else:
+            text = _history[num - 1]
+    if text is None:
+        _show_toast(HISTORY_NOT_FOUND_TEXT.format(num=num))
+        return
+    _current_history_index = num - 1
+    if _current_popup is not None:
+        _current_popup.show_history(text)
+
+
+def _show_toast(text):
+    popup = CoverPopup(no_activate=True)
+    popup.start()
+    popup.show_status(text, None, None)
+
+    def _finish():
+        popup.hide(silent=True)
+        popup.destroy()
+
+    threading.Timer(TOAST_DURATION_SECONDS, _finish).start()
 
 
 def toggle_setting(settings, key):
-    settings[key] = not settings.get(key, True if key == 'copy_on_close' else False)
+    settings[key] = not settings.get(key, False)
     config.save(settings)
 
 
@@ -364,8 +456,10 @@ def restart_app(tray, mutex):
     destroy_popup()
     tray.destroy()
     win32api.CloseHandle(mutex)
-    import sys
-    subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+    if getattr(sys, 'frozen', False):
+        subprocess.Popen([sys.executable])
+    else:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__)])
     os._exit(0)
 
 
