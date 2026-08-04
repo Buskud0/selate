@@ -20,6 +20,12 @@ DEFAULT_CONFIG = {
     'run_at_startup': False,
     'always_on_top': True,
     'notifications': True,
+    'notify_model_checking': False,
+    'notify_model_downloading': True,
+    'notify_model_initializing': False,
+    'notify_selecting': False,
+    'notify_translating': True,
+    'usage_instructions_seen': False,
 }
 
 _cache = None

@@ -22,7 +22,17 @@ CMD_QUIT = 1003
 CMD_RESTART = 1004
 CMD_TOP = 1005
 CMD_NOTIFICATIONS = 1006
+CMD_USAGE = 1008
 CMD_HISTORY_BASE = 2000
+CMD_NOTIFY_BASE = 1100
+
+NOTIFICATION_ITEMS = [
+    ("Tikrinamas vertimo modelis", 'notify_model_checking', False),
+    ("Atsisiunčiamas vertimo modelis", 'notify_model_downloading', True),
+    ("Inicijuojamas vertimo modelis", 'notify_model_initializing', False),
+    ("Žymima", 'notify_selecting', False),
+    ("Verčiama", 'notify_translating', True),
+]
 
 HISTORY_PREVIEW_LIMIT = 40
 HISTORY_PREVIEW_SUFFIX = '...'
@@ -83,13 +93,16 @@ class TrayIcon:
     WM_TRAY = win32con.WM_USER + 20
 
     def __init__(self, settings, on_quit, on_toggle_startup,
-                 on_toggle_topmost, on_toggle_notifications, on_history,
+                 on_toggle_topmost, on_toggle_notifications,
+                 on_toggle_notification, on_usage, on_history,
                  get_history, on_restart, history_size=3):
         self.settings = settings
         self.on_quit = on_quit
         self.on_toggle_startup = on_toggle_startup
         self.on_toggle_topmost = on_toggle_topmost
         self.on_toggle_notifications = on_toggle_notifications
+        self.on_toggle_notification = on_toggle_notification
+        self.on_usage = on_usage
         self.on_history = on_history
         self.get_history = get_history
         self.on_restart = on_restart
@@ -228,8 +241,13 @@ class TrayIcon:
                 self.on_toggle_startup()
             elif cmd == CMD_TOP:
                 self.on_toggle_topmost()
-            elif cmd == CMD_NOTIFICATIONS:
-                self.on_toggle_notifications()
+            elif cmd == CMD_USAGE:
+                if self.on_usage is not None:
+                    self.on_usage()
+            elif CMD_NOTIFY_BASE <= cmd < CMD_NOTIFY_BASE + len(NOTIFICATION_ITEMS):
+                if self.on_toggle_notification is not None:
+                    key = NOTIFICATION_ITEMS[cmd - CMD_NOTIFY_BASE][1]
+                    self.on_toggle_notification(key)
             elif CMD_HISTORY_BASE <= cmd < CMD_HISTORY_BASE + self.history_size:
                 self.on_history(cmd - CMD_HISTORY_BASE + 1)
             elif cmd == CMD_QUIT:
@@ -258,8 +276,18 @@ class TrayIcon:
                            self.settings.get('run_at_startup'))
         self._append_check(menu, "Visada viršuje", CMD_TOP,
                            self.settings.get('always_on_top', True))
-        self._append_check(menu, "Pranešimai", CMD_NOTIFICATIONS,
-                           self.settings.get('notifications', True))
+
+        notify_menu = win32gui.CreatePopupMenu()
+        for index, (label, key, default) in enumerate(NOTIFICATION_ITEMS):
+            self._append_check(
+                notify_menu,
+                label,
+                CMD_NOTIFY_BASE + index,
+                self.settings.get(key, default),
+            )
+        win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_POPUP, notify_menu, "Papildomi pranešimai")
+
+        win32gui.AppendMenu(menu, win32con.MF_STRING, CMD_USAGE, "Naudojimo instrukcija")
 
         history = self.get_history() if self.get_history else []
         hist_menu = win32gui.CreatePopupMenu()

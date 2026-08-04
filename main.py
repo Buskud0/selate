@@ -5,6 +5,25 @@ import sys
 import threading
 import time
 
+if getattr(sys, 'frozen', False):
+    import os
+    import sysconfig
+    import tkinter
+    import _tkinter
+
+    base_dir = os.path.dirname(sys.executable)
+    tcl_root = os.path.join(base_dir, '_internal')
+    if not os.path.isdir(tcl_root):
+        tcl_root = sysconfig.get_paths().get('stdlib', '')
+    if os.path.isdir(tcl_root):
+        os.environ['TCL_LIBRARY'] = os.path.join(tcl_root, 'tcl8.6') if os.path.isdir(os.path.join(tcl_root, 'tcl8.6')) else tcl_root
+        os.environ['TK_LIBRARY'] = os.path.join(tcl_root, 'tk8.6') if os.path.isdir(os.path.join(tcl_root, 'tk8.6')) else tcl_root
+    try:
+        tkinter.Tk()
+        tkinter.Tk().destroy()
+    except Exception:
+        pass
+
 import win32api
 import win32event
 import winerror
@@ -91,8 +110,9 @@ def start_preload():
 def _preload_import():
     try:
         mod = _get_translator()
+        needed_download = not mod.is_downloaded()
         _set_model_status(
-            'initializing' if mod.is_downloaded() else 'downloading'
+            'initializing' if not needed_download else 'downloading'
         )
         mod.preload()
         while not mod.is_ready():
@@ -102,6 +122,10 @@ def _preload_import():
                 return
             time.sleep(MODEL_STATUS_POLL_SECONDS)
         _set_model_status('ready')
+        if needed_download:
+            if _cover_visible:
+                hide_popup()
+            show_usage_instructions(force=True)
     except Exception:
         log_exception('preload_import')
 
@@ -169,12 +193,18 @@ def _watch_model_loading():
             _current_popup.show_status(text, None, None)
             log('startup: model initialization error shown')
             return
-        _ensure_popup()
-        if not _cover_visible:
-            _current_popup.show_status(text, None, None)
-            _cover_visible = True
-        elif _current_popup.current_text() != text:
-            _current_popup.show_status(text, None, None)
+        if _should_show_status(text):
+            _ensure_popup()
+            if not _cover_visible:
+                _current_popup.show_status(text, None, None)
+                _cover_visible = True
+            elif _current_popup.current_text() != text:
+                _current_popup.show_status(text, None, None)
+        else:
+            if _cover_visible:
+                hide_popup()
+        if text == 'Atsiunčiamas vertimo modelis...':
+            _current_popup._locked = True
         time.sleep(MODEL_STATUS_POLL_SECONDS)
 
 
@@ -196,6 +226,8 @@ def build_tray_icon(settings, mutex):
         on_toggle_startup=lambda: toggle_setting(settings, 'run_at_startup'),
         on_toggle_topmost=lambda: toggle_topmost(settings),
         on_toggle_notifications=lambda: toggle_setting(settings, 'notifications'),
+        on_toggle_notification=lambda key: toggle_notification_setting(settings, key),
+        on_usage=lambda: show_usage_instructions(force=True),
         on_history=handle_history,
         get_history=history_snapshot,
         on_restart=lambda: restart_app(tray, mutex),
@@ -218,6 +250,8 @@ def ensure_hint_popup():
 
 
 def show_select_hint():
+    if not _should_show_status(SELECT_HINT_TEXT):
+        return
     ensure_hint_popup()
     with _active_hint_lock:
         popup = _active_hint
@@ -238,6 +272,59 @@ def history_snapshot():
 
 def notifications_enabled():
     return config.load().get('notifications', True)
+
+
+def _should_show_status(text):
+    if not notifications_enabled():
+        return False
+    settings = config.load()
+    if text == 'Tikrinamas vertimo modelis...':
+        return settings.get('notify_model_checking', False)
+    if text == 'Atsiunčiamas vertimo modelis...':
+        return settings.get('notify_model_downloading', True)
+    if text == 'Inicializuojamas vertimo modelis...':
+        return settings.get('notify_model_initializing', False)
+    if text == SELECT_HINT_TEXT:
+        return settings.get('notify_selecting', False)
+    if text == TRANSLATING_TEXT:
+        return settings.get('notify_translating', True)
+    return True
+
+
+def toggle_notification_setting(settings, key):
+    settings[key] = not settings.get(key, False)
+    config.save(settings)
+
+
+def show_usage_instructions(force=False):
+    settings = config.load()
+    if not force and settings.get('usage_instructions_seen', False):
+        return
+    settings['usage_instructions_seen'] = True
+    config.save(settings)
+    popup = CoverPopup(no_activate=True)
+    popup.start()
+    popup.wait_ready(2.0)
+    try:
+        cursor_x, cursor_y = win32api.GetCursorPos()
+        work = screen.work_area_at(cursor_x, cursor_y)
+        cx = (work[0] + work[2]) // 2
+        cy = (work[1] + work[3]) // 2
+        anchor = (cx, cy)
+    except Exception:
+        anchor = None
+    popup.show_translation(
+        'Naudojimo instrukcijos:\n\n'
+        '• Laikykite Ctrl ir tempkite pele, kad pažymėtumėte tekstą bei gautumėte vertimą (EN → LT).\n'
+        '• Kairiuoju pelės klavišu galite perkelti vertimo langą.\n'
+        '• Dešiniuoju pelės klavišu uždarykite vertimo langą.\n'
+        '• Dukart spustelėkite vertimo langą, kad galėtumėte redaguoti tekstą.\n'
+        '• Tempkite už lango kampų, kad pakeistumėte jo dydį.\n'
+        '• Ctrl + pelės ratukas keičia teksto dydį, nekeisdamas lango dydžio.\n'
+        '• Sistemos tray (dešinėj apačioj) piktogramoje rasite daugiau nustatymų: istoriją, paleidimą kartu su kompiuteriu, programėlės išjungimą ir kitus veiksmus.',
+        None,
+        anchor,
+    )
 
 
 def toggle_topmost(settings):
@@ -448,19 +535,27 @@ def destroy_popup():
 def quit_app(tray, mutex):
     destroy_popup()
     tray.destroy()
-    win32api.CloseHandle(mutex)
-    os._exit(0)
+    try:
+        if mutex is not None:
+            win32api.CloseHandle(mutex)
+    except Exception:
+        pass
+    raise SystemExit(0)
 
 
 def restart_app(tray, mutex):
     destroy_popup()
     tray.destroy()
-    win32api.CloseHandle(mutex)
+    try:
+        if mutex is not None:
+            win32api.CloseHandle(mutex)
+    except Exception:
+        pass
     if getattr(sys, 'frozen', False):
         subprocess.Popen([sys.executable])
     else:
         subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-    os._exit(0)
+    raise SystemExit(0)
 
 
 if __name__ == '__main__':
