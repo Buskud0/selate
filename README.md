@@ -36,6 +36,7 @@ Naujausia paruošta versija yra Releases skiltyje.
 - Dukart spustelėkite langą, kad jį redaguotumėte.
 - Dešiniuoju pelės mygtuku uždarykite langą.
 - Naudokite Ctrl + pelės ratuką teksto dydžiui keisti.
+- Naudokite Ctrl + skaičius 1-3, norint peržiūrėti vertimų istoriją.
 
 ### Dėklo meniu
 
