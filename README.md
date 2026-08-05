@@ -16,7 +16,7 @@ Naujausia paruošta versija yra Releases skiltyje.
 - Vertimo langas su perkėlimo, dydžio keitimo ir redagavimo galimybėmis
 - Vertimų istorija bei nustatymai prieinami dėklo (System Tray) meniu
 - Pranešimų valdymas apie modelio būseną ir vertimo procesą
-- Modelis po 3 minučių neaktyvumo "užmiega" - nenaudoja atminties, kai nereikia.
+- Modelis po 3 minučių neaktyvumo "užmiega" - nenaudoja atminties, kai nereikia
 - Pirmojo paleidimo automatinis modelio atsisiuntimas ir vietinis modelio talpinimas
 
 ## Naudojimo instrukcija
