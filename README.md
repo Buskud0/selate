@@ -14,11 +14,10 @@ Naujausia paruošta versija yra Releases skiltyje.
 
 - Teksto pasirinkimas pelės pagalba (Ctrl + vilkimas)
 - Vertimo langas su perkėlimo, dydžio keitimo ir redagavimo galimybėmis
-- Integracija su sistemos dėklo piktograma
-- Vertimų istorija iš dėklo meniu
+- Vertimų istorija bei nustatymai prieinami dėklo (System Tray) meniu
 - Pranešimų valdymas apie modelio būseną ir vertimo procesą
-- Pasirenkamas paleidimas kartu su sistema ir „visada viršuje“ režimas
-- Pirmojo paleidimo modelio atsisiuntimas ir vietinis modelio talpinimas
+- Modelis po 3 minučių neaktyvumo "užmiega" - nenaudoja atminties, kai nereikia.
+- Pirmojo paleidimo automatinis modelio atsisiuntimas ir vietinis modelio talpinimas
 
 ## Naudojimo instrukcija
 
