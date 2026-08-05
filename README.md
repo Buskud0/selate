@@ -22,32 +22,11 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 
 ## Diegimas
 
-### 1 variantas: paleidimas iš paruošto vykdomojo failo
-
 Naujausia paruošta versija yra Releases skiltyje.
 
 1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/)
 2. Atsisiųskite pagrindinį failą Selate.exe.
 3. Paleiskite programą
-
-### 2 variantas: paleidimas iš šaltinio kodo
-
-Reikalavimai:
-- Windows 10 arba Windows 11
-- Python 3.10+ (šiam projektui buvo naudojama Python 3.13 versija)
-- Interneto ryšys pirmam modelio atsisiuntimui
-
-Įdiekite priklausomybes:
-
-```powershell
-py -m pip install -r requirements.txt
-```
-
-Paleiskite programą:
-
-```powershell
-py main.py
-```
 
 ## Naudojimo instrukcija
 
@@ -153,7 +132,26 @@ Projektas naudoja:
 
 ## Kūrėjų statybos instrukcijos
 
-Norėdami sukurti Windows vykdomąjį failą:
+### Paleidimas iš šaltinio kodo
+
+Reikalavimai:
+- Windows 10 arba Windows 11
+- Python 3.10+ (šiam projektui buvo naudojama Python 3.13 versija)
+- Interneto ryšys pirmam modelio atsisiuntimui
+
+Įdiekite priklausomybes:
+
+```powershell
+py -m pip install -r requirements.txt
+```
+
+Paleiskite programą:
+
+```powershell
+py main.py
+```
+
+### Windows vykdomojo failo kūrimas:
 
 ```powershell
 py -m pip install -r requirements.txt
