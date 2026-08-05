@@ -90,10 +90,18 @@ class TranslationWorker:
             self._toast(messages.COPY_FAILED_TEXT)
             return None
         if not self._translator.is_ready():
-            state = self._status_text()
-            if state is not None:
-                self._toast(state)
-            self._popup.ensure()
+            mod = self._translator.loaded()
+            if mod is not None and mod.needs_reload():
+                if status.should_show_status(messages.TRANSLATING_TEXT, config.load()):
+                    self._popup.cover()
+                    self._popup.show_placeholder(end_x, end_y)
+                else:
+                    self._popup.ensure()
+            else:
+                state = self._status_text()
+                if state is not None:
+                    self._toast(state)
+                self._popup.ensure()
         elif status.should_show_status(messages.TRANSLATING_TEXT, config.load()):
             self._popup.cover()
             self._popup.show_placeholder(end_x, end_y)
