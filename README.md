@@ -47,6 +47,8 @@ Dešiniuoju pelės mygtuku spustelėkite piktogramą dėkle, kad atidarytumėte 
 - vertimų istorija
 - programos perkrovimu arba išėjimu
 
+<img width="451" height="529" alt="image" src="https://github.com/user-attachments/assets/326eded8-3ed6-48b5-a1d0-a03629fad0ce" />
+
 ## Nustatymai
 
 Nustatymai saugomi naudotojo profilyje, vietiniame programos duomenų aplanke:
