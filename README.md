@@ -9,7 +9,6 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 1. Paleiskite programą ir palaukite kol inicijuosis vertimo modelis.
 2. Laikykite Ctrl ir vilkite pelę per tekstą ekrane.
 3. Programa užfiksuoja pažymėtą tekstą ir rodo vertimą iššokančiame lange.
-4. Galite redaguoti vertimą, perkelti ar pakeisti lango dydį bei peržiūrėti ankstesnius vertimus iš meniu.
 
 ## Pagrindinės funkcijos
 
@@ -27,7 +26,7 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 
 Naujausia paruošta versija yra Releases skiltyje.
 
-1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/).
+1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/)
 2. Atsisiųskite pagrindinį failą Selate.exe.
 3. Paleiskite programą
 
@@ -198,8 +197,3 @@ powershell -ExecutionPolicy Bypass -File .\build_release.ps1
 - Programa yra skirta Windows sistemai ir priklauso nuo Windows specifinių API.
 - Vertimo kokybė ir greitis priklauso nuo modelio ir kompiuterio galimybių.
 
-## Ateities patobulinimai
-
-Galimi ateities patobulinimai:
-- papildomos kalbos
-- patrauklesni popup animacijos ir stilius
