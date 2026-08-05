@@ -2,13 +2,13 @@
 
 Selate yra „Windows“ darbalaukio programa, skirta greitai išversti pasirinktą tekstą iš anglų į lietuvių kalbą. Ji veikia System Tray srityje, leidžia pažymėti tekstą pelės pagalba ir rodo vertimo rezultatą iššokusiame lange.
 
-## Kas tai yra?
+## Diegimas
 
-Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti programas ar rankiniu būdu kopijuoti informaciją. Darbo eiga labai paprasta:
+Naujausia paruošta versija yra Releases skiltyje.
 
-1. Paleiskite programą ir palaukite kol inicijuosis vertimo modelis.
-2. Laikykite Ctrl ir vilkite pelę per tekstą ekrane.
-3. Programa užfiksuoja pažymėtą tekstą ir rodo vertimą iššokančiame lange.
+1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/)
+2. Atsisiųskite pagrindinį failą Selate.exe.
+3. Paleiskite programą
 
 ## Pagrindinės funkcijos
 
@@ -19,14 +19,6 @@ Selate padeda versti tekstą lokaliai jūsų kompiuteryje be poreikio perjungti 
 - Pranešimų valdymas apie modelio būseną ir vertimo procesą
 - Pasirenkamas paleidimas kartu su sistema ir „visada viršuje“ režimas
 - Pirmojo paleidimo modelio atsisiuntimas ir vietinis modelio talpinimas
-
-## Diegimas
-
-Naujausia paruošta versija yra Releases skiltyje.
-
-1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/)
-2. Atsisiųskite pagrindinį failą Selate.exe.
-3. Paleiskite programą
 
 ## Naudojimo instrukcija
 
