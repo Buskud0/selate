@@ -28,6 +28,7 @@ if getattr(sys, 'frozen', False):
 
 import win32api
 import win32event
+import win32process
 import winerror
 
 from applog import log, log_exception
@@ -444,10 +445,45 @@ def restart_app(tray, mutex):
     except Exception:
         pass
     if getattr(sys, 'frozen', False):
-        subprocess.Popen([sys.executable])
+        _terminate_parent_bootloader()
+        cmd = [sys.executable]
     else:
-        subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-    raise SystemExit(0)
+        cmd = [sys.executable, os.path.abspath(__file__)]
+    try:
+        subprocess.Popen(
+            cmd,
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    finally:
+        os._exit(0)
+
+
+def _terminate_parent_bootloader():
+    """Kill the PyInstaller onefile bootloader (parent process) so it cannot keep
+    deleting its temp extraction directory while the restarted instance starts
+    up - which otherwise corrupts the new instance's extraction and breaks the
+    transformers model import."""
+    try:
+        parent_pid = os.getppid()
+        if parent_pid <= 0:
+            return
+        access = 0x1000  # PROCESS_QUERY_LIMITED_INFORMATION
+        handle = win32api.OpenProcess(access, False, parent_pid)
+        try:
+            parent_exe = win32process.GetModuleFileNameEx(handle, 0)
+        except Exception:
+            parent_exe = None
+        finally:
+            win32api.CloseHandle(handle)
+        if not parent_exe or os.path.normcase(parent_exe) != os.path.normcase(sys.executable):
+            return
+        handle = win32api.OpenProcess(0x0001, False, parent_pid)  # PROCESS_TERMINATE
+        try:
+            win32api.TerminateProcess(handle, 0)
+        finally:
+            win32api.CloseHandle(handle)
+    except Exception:
+        pass
 
 
 if __name__ == '__main__':
