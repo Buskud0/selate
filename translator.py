@@ -81,6 +81,12 @@ def load_failed():
     return _load_error is not None
 
 
+def needs_reload():
+    """True when the tokenizer is ready but the model was unloaded after
+    being idle, so a reload should be triggered before translating."""
+    return _ready and _model is None
+
+
 def get_download_progress():
     with _download_progress_lock:
         return _download_progress

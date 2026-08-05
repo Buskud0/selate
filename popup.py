@@ -5,7 +5,8 @@ import threading
 from applog import log_exception
 import config
 from popup_draw import (
-    DEFAULT_FONT_SIZE, FONT_STEP, MAX_FONT_SIZE, MIN_FONT_SIZE,
+    BACKGROUND, DEFAULT_FONT_SIZE, FONT_STEP, MAGIC_COLOR,
+    MAX_FONT_SIZE, MIN_FONT_SIZE,
     _create_canvas, _create_window, _draw_box, _make_font, _measure_text,
 )
 from popup_editor import PopupEditor
@@ -99,6 +100,7 @@ class CoverPopup:
                 self._window.winfo_width(), self._window.winfo_height(),
             )
             self._resize_pos = (event.x_root, event.y_root)
+            self._begin_resize_surface()
             return
         self._dragging = True
         self._resizing = None
@@ -186,6 +188,7 @@ class CoverPopup:
             h = max(MIN_HEIGHT, h0 - dy)
             y = y0 + h0 - h
         self._window.geometry(f'{int(w)}x{int(h)}+{int(x)}+{int(y)}')
+        self._window.update_idletasks()
         if (w, h) != (self._last_resize_w, self._last_resize_h):
             self._last_resize_w, self._last_resize_h = w, h
             self._font_size = self._fit_font_to_window(self._current_text, w, h)
@@ -209,8 +212,31 @@ class CoverPopup:
         return best
 
     def _on_release(self, event):
+        if self._resizing:
+            self._end_resize_surface()
         self._resizing = None
         self._dragging = False
+
+    def _begin_resize_surface(self):
+        if self._window is None or self._canvas is None:
+            return
+        try:
+            self._window.attributes('-transparentcolor', '')
+        except Exception:
+            pass
+        self._canvas.config(bg=BACKGROUND)
+
+    def _end_resize_surface(self):
+        if self._window is None or self._canvas is None:
+            return
+        try:
+            self._window.attributes('-transparentcolor', MAGIC_COLOR)
+        except Exception:
+            pass
+        self._canvas.config(bg=MAGIC_COLOR)
+        width = self._window.winfo_width()
+        height = self._window.winfo_height()
+        self._draw_content(width, height)
 
     def _on_edit_start(self, event):
         if self._window is None or self._editor is not None or not self._current_text or self._locked:
@@ -362,6 +388,8 @@ class CoverPopup:
     def _show_now(self, text, pos='center', anchor=None, locked=False, keep_pos=False):
         if not text or not text.strip():
             return
+        if not config.load().get('save_font_size', False):
+            self._font_size = DEFAULT_FONT_SIZE
         self._locked = locked
         self._current_text = text
         self._current_pos = pos

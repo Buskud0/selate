@@ -14,14 +14,6 @@ KEY_C = 0x43
 _MODIFIER_KEYS = (0x11, 0x10, 0x12, 0x5B)
 
 
-def read_clipboard():
-    return _read()
-
-
-def write_clipboard(text):
-    _write(text)
-
-
 def get_selected_text():
     """Copy the current selection and return the selected text."""
     _release_all_modifiers()

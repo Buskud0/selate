@@ -60,12 +60,6 @@ def _fit_text_size(full_width, full_height, work):
     return width, height, scroll_max
 
 
-def _text_x_for(width, pos):
-    if pos == 'se':
-        return width - TEXT_PADDING
-    return width // 2
-
-
 def _text_wrap_width(font, text, width):
     return max(1, min(font.measure(text), width - 2 * TEXT_PADDING))
 

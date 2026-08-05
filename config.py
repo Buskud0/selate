@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     'notify_model_initializing': False,
     'notify_selecting': False,
     'notify_translating': True,
+    'save_font_size': False,
     'usage_instructions_seen': False,
 }
 

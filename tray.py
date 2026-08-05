@@ -22,6 +22,7 @@ CMD_QUIT = 1003
 CMD_RESTART = 1004
 CMD_TOP = 1005
 CMD_NOTIFICATIONS = 1006
+CMD_SAVE_FONT_SIZE = 1007
 CMD_USAGE = 1008
 CMD_HISTORY_BASE = 2000
 CMD_NOTIFY_BASE = 1100
@@ -95,7 +96,8 @@ class TrayIcon:
     def __init__(self, settings, on_quit, on_toggle_startup,
                  on_toggle_topmost, on_toggle_notifications,
                  on_toggle_notification, on_usage, on_history,
-                 get_history, on_restart, history_size=3):
+                 get_history, on_restart, on_toggle_save_font_size=None,
+                 history_size=3):
         self.settings = settings
         self.on_quit = on_quit
         self.on_toggle_startup = on_toggle_startup
@@ -106,6 +108,7 @@ class TrayIcon:
         self.on_history = on_history
         self.get_history = get_history
         self.on_restart = on_restart
+        self.on_toggle_save_font_size = on_toggle_save_font_size
         self.on_box = None
         self.on_select_start = None
         self.on_select_end = None
@@ -214,8 +217,9 @@ class TrayIcon:
         y = min(start[1], end[1])
         width = abs(end[0] - start[0])
         height = abs(end[1] - start[1])
-        self._invoke(self.on_select_end, 'hook: select end error')
-        if width >= HOOK_MIN_DRAG and height >= HOOK_MIN_DRAG:
+        box_sent = max(width, height) >= HOOK_MIN_DRAG
+        self._invoke(self.on_select_end, 'hook: select end error', box_sent)
+        if box_sent:
             self._invoke(self.on_box, 'hook: box error', x, y, width, height, end[0], end[1])
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
@@ -241,6 +245,9 @@ class TrayIcon:
                 self.on_toggle_startup()
             elif cmd == CMD_TOP:
                 self.on_toggle_topmost()
+            elif cmd == CMD_SAVE_FONT_SIZE:
+                if self.on_toggle_save_font_size is not None:
+                    self.on_toggle_save_font_size()
             elif cmd == CMD_USAGE:
                 if self.on_usage is not None:
                     self.on_usage()
@@ -276,6 +283,8 @@ class TrayIcon:
                            self.settings.get('run_at_startup'))
         self._append_check(menu, "Visada viršuje", CMD_TOP,
                            self.settings.get('always_on_top', True))
+        self._append_check(menu, "Išsaugoti šrifto dydį", CMD_SAVE_FONT_SIZE,
+                           self.settings.get('save_font_size', False))
 
         notify_menu = win32gui.CreatePopupMenu()
         for index, (label, key, default) in enumerate(NOTIFICATION_ITEMS):
@@ -286,8 +295,6 @@ class TrayIcon:
                 self.settings.get(key, default),
             )
         win32gui.AppendMenu(menu, win32con.MF_STRING | win32con.MF_POPUP, notify_menu, "Papildomi pranešimai")
-
-        win32gui.AppendMenu(menu, win32con.MF_STRING, CMD_USAGE, "Naudojimo instrukcija")
 
         history = self.get_history() if self.get_history else []
         hist_menu = win32gui.CreatePopupMenu()
@@ -304,6 +311,8 @@ class TrayIcon:
         win32gui.AppendMenu(
             menu, win32con.MF_STRING | win32con.MF_POPUP, hist_menu, "Istorija"
         )
+
+        win32gui.AppendMenu(menu, win32con.MF_STRING, CMD_USAGE, "Naudojimo instrukcija")
 
         win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
         win32gui.AppendMenu(menu, win32con.MF_STRING, CMD_RESTART, "Restartuoti")
