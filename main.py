@@ -1,5 +1,7 @@
+"""Selate entry point (composition root): wires the tray, popup, translator
+and translation worker together, then owns the app lifecycle."""
+
 import os
-import queue
 import subprocess
 import sys
 import threading
@@ -47,39 +49,77 @@ _enable_dpi_awareness()
 
 import clipboard
 import config
+import messages
+import screen
+import status
+from history_store import HistoryStore, HISTORY_MAX
 from popup import CoverPopup
+from translation_worker import TranslationWorker
 from tray import TrayIcon
 
 SINGLE_INSTANCE_MUTEX = "Selate-{8A2B1C3D-4E5F-6A7B-8C9D-0E1F2A3B4C5D}"
 
+MODEL_STATUS_POLL_SECONDS = 0.5
+HIDE_POPUP_DELAY_SECONDS = 0.1
+TOAST_DURATION_SECONDS = 2.0
+
+
+class TranslatorAccessor:
+    """Lazy access to the translator module (dependency seam for the worker)."""
+
+    def __init__(self):
+        self._mod = None
+
+    def get(self):
+        if self._mod is None:
+            import translator
+            self._mod = translator
+        return self._mod
+
+    def loaded(self):
+        return self._mod
+
+    def is_ready(self):
+        mod = self._mod
+        if mod is None:
+            return False
+        try:
+            return mod.is_ready()
+        except Exception:
+            return False
+
+
+class PopupController:
+    """Popup operations used by the translation worker (dependency seam)."""
+
+    def ensure(self):
+        _ensure_popup()
+
+    def hide(self):
+        hide_popup()
+
+    def cover(self):
+        show_cover()
+
+    def show_placeholder(self, end_x, end_y):
+        _show_placeholder(end_x, end_y)
+
+    def show_translation(self, text, end_x, end_y):
+        if _current_popup is not None:
+            _current_popup.show_translation(text, None, (end_x, end_y))
+
+
 _current_popup = None
 _cover_visible = False
-_box_queue = queue.Queue()
-_cancel_event = threading.Event()
-_translating = False
-_translating_lock = threading.Lock()
-_history = []
-_history_lock = threading.Lock()
-_current_history_index = 0
-HISTORY_MAX = 3
 _active_hint = None
 _active_hint_lock = threading.Lock()
 _hint_shown = False
-_translator_mod = None
 
 _model_status = 'checking'
 _model_status_lock = threading.Lock()
 
-MODEL_STATUS_POLL_SECONDS = 0.5
-MODEL_WAIT_POLL_SECONDS = 0.2
-HIDE_POPUP_DELAY_SECONDS = 0.1
-TOAST_DURATION_SECONDS = 2.0
-SELECT_HINT_TEXT = 'Žymima...'
-TRANSLATING_TEXT = 'Verčiama...'
-HISTORY_NOT_FOUND_TEXT = 'Vertimas #{num} nerastas'
-COPY_FAILED_TEXT = 'Nepavyko nuskaityti pasirinkto teksto.'
-TRANSLATION_FAILED_TEXT = 'Nepavyko išversti pasirinkto teksto.'
-SELECTION_TOO_SMALL_TEXT = 'Pasirinkimas per mažas. Tempkite ilgiau.'
+history = HistoryStore()
+translator_accessor = TranslatorAccessor()
 
 
 def _set_model_status(state):
@@ -93,6 +133,18 @@ def _get_model_status():
         return _model_status
 
 
+def _model_status_text():
+    mod = translator_accessor.loaded()
+    progress = None
+    if mod is not None:
+        progress = lambda: mod.get_download_progress()
+    return status.status_text(_get_model_status(), progress)
+
+
+def notifications_enabled():
+    return config.load().get('notifications', True)
+
+
 def main():
     mutex = ensure_single_instance()
     if mutex is None:
@@ -100,7 +152,7 @@ def main():
     settings = config.load()
     ensure_hint_popup()
     start_preload()
-    start_request_worker()
+    translation_worker.start()
     tray = build_tray_icon(settings, mutex)
     tray.create()
     tray.run()
@@ -113,7 +165,7 @@ def start_preload():
 
 def _preload_import():
     try:
-        mod = _get_translator()
+        mod = translator_accessor.get()
         needed_download = not mod.is_downloaded()
         _set_model_status(
             'initializing' if not needed_download else 'downloading'
@@ -127,63 +179,22 @@ def _preload_import():
             time.sleep(MODEL_STATUS_POLL_SECONDS)
         _set_model_status('ready')
         if needed_download:
-            with _translating_lock:
-                busy = _translating
-            if _cover_visible and not busy:
+            if _cover_visible and not translation_worker.busy:
                 hide_popup()
             show_usage_instructions(force=True)
     except Exception:
         log_exception('preload_import')
 
 
-def _get_translator():
-    global _translator_mod
-    mod = _translator_mod
-    if mod is None:
-        import translator
-        mod = _translator_mod = translator
-    return mod
-
-
-def _model_status_text():
-    if _get_model_status() == 'downloading' and _translator_mod is not None:
-        try:
-            downloaded, total = _translator_mod.get_download_progress()
-            if total:
-                return (
-                    'Atsiunčiamas vertimo modelis... '
-                    f'{downloaded / 1024 / 1024:.0f} / {total / 1024 / 1024:.0f} MB'
-                )
-        except Exception:
-            pass
-    return {
-        'checking': 'Tikrinamas vertimo modelis...',
-        'loading': 'Tikrinamas vertimo modelis...',
-        'downloading': 'Atsiunčiamas vertimo modelis...',
-        'initializing': 'Inicializuojamas vertimo modelis...',
-        'error': 'Nepavyko inicializuoti vertimo modelio.',
-        'ready': None,
-    }.get(_get_model_status(), 'Atsiunčiamas vertimo modelis...')
-
-
-_LOADING_TEXTS = (
-    'Tikrinamas vertimo modelis...',
-    'Inicializuojamas vertimo modelis...',
-    'Atsiunčiamas vertimo modelis...',
-)
-
-
 def _watch_model_loading():
     global _current_popup, _cover_visible
     while True:
         if not notifications_enabled():
-            if _cover_visible and _current_popup is not None and _current_popup.current_text() in _LOADING_TEXTS:
+            if _cover_visible and _current_popup is not None and _current_popup.current_text() in status.LOADING_TEXTS:
                 hide_popup()
             time.sleep(MODEL_STATUS_POLL_SECONDS)
             continue
-        with _translating_lock:
-            busy = _translating
-        if busy:
+        if translation_worker.busy:
             time.sleep(MODEL_STATUS_POLL_SECONDS)
             continue
         text = _model_status_text()
@@ -191,8 +202,8 @@ def _watch_model_loading():
             if _current_popup is not None:
                 current_text = _current_popup.current_text()
                 if (
-                    current_text in _LOADING_TEXTS
-                    or current_text.startswith('Atsiunčiamas vertimo modelis...')
+                    current_text in status.LOADING_TEXTS
+                    or current_text.startswith(messages.TEXT_DOWNLOADING)
                 ):
                     hide_popup()
             return
@@ -201,7 +212,7 @@ def _watch_model_loading():
             _current_popup.show_status(text, None, None)
             log('startup: model initialization error shown')
             return
-        if _should_show_status(text):
+        if status.should_show_status(text, config.load()):
             _ensure_popup()
             if not _cover_visible:
                 _current_popup.show_status(text, None, None)
@@ -211,7 +222,7 @@ def _watch_model_loading():
         else:
             if _cover_visible:
                 hide_popup()
-        if text == 'Atsiunčiamas vertimo modelis...':
+        if text == messages.TEXT_DOWNLOADING:
             _current_popup._locked = True
         time.sleep(MODEL_STATUS_POLL_SECONDS)
 
@@ -238,11 +249,11 @@ def build_tray_icon(settings, mutex):
         on_toggle_save_font_size=lambda: toggle_setting(settings, 'save_font_size'),
         on_usage=lambda: show_usage_instructions(force=True),
         on_history=handle_history,
-        get_history=history_snapshot,
+        get_history=history.snapshot,
         on_restart=lambda: restart_app(tray, mutex),
         history_size=HISTORY_MAX,
     )
-    tray.on_box = request_box
+    tray.on_box = translation_worker.request
     tray.on_select_start = show_select_hint
     tray.on_select_end = hide_select_hint
     return tray
@@ -260,13 +271,13 @@ def ensure_hint_popup():
 
 def show_select_hint():
     global _hint_shown
-    if not _should_show_status(SELECT_HINT_TEXT):
+    if not status.should_show_status(messages.SELECT_HINT_TEXT, config.load()):
         return
     _hint_shown = True
     ensure_hint_popup()
     with _active_hint_lock:
         popup = _active_hint
-    popup.show_status(SELECT_HINT_TEXT, None, None)
+    popup.show_status(messages.SELECT_HINT_TEXT, None, None)
 
 
 def hide_select_hint(box_sent=True):
@@ -276,34 +287,8 @@ def hide_select_hint(box_sent=True):
     if popup is not None:
         popup.hide(silent=True)
     if not box_sent and _hint_shown:
-        _show_toast(SELECTION_TOO_SMALL_TEXT)
+        _show_toast(messages.SELECTION_TOO_SMALL_TEXT)
     _hint_shown = False
-
-
-def history_snapshot():
-    with _history_lock:
-        return list(_history[:HISTORY_MAX])
-
-
-def notifications_enabled():
-    return config.load().get('notifications', True)
-
-
-def _should_show_status(text):
-    if not notifications_enabled():
-        return False
-    settings = config.load()
-    if text == 'Tikrinamas vertimo modelis...':
-        return settings.get('notify_model_checking', False)
-    if text == 'Atsiunčiamas vertimo modelis...':
-        return settings.get('notify_model_downloading', True)
-    if text == 'Inicializuojamas vertimo modelis...':
-        return settings.get('notify_model_initializing', False)
-    if text == SELECT_HINT_TEXT:
-        return settings.get('notify_selecting', False)
-    if text == TRANSLATING_TEXT:
-        return settings.get('notify_translating', True)
-    return True
 
 
 def toggle_notification_setting(settings, key):
@@ -354,122 +339,7 @@ def apply_topmost():
         _current_popup.set_topmost(config.load().get('always_on_top', True))
 
 
-def start_request_worker():
-    threading.Thread(target=_request_worker_loop, daemon=True).start()
-
-
-def _request_worker_loop():
-    while True:
-        try:
-            box = _box_queue.get(timeout=1)
-        except queue.Empty:
-            continue
-        try:
-            _cancel_event.clear()
-            text = _begin_translation(box)
-            if text is None:
-                continue
-            if not _wait_for_model():
-                hide_popup()
-                continue
-            _handle_box(box, text)
-        except Exception:
-            log_exception('worker_loop')
-        finally:
-            _end_translation()
-
-
-def _model_is_ready():
-    mod = _translator_mod
-    if mod is None:
-        return False
-    try:
-        return mod.is_ready()
-    except Exception:
-        return False
-
-
-def _begin_translation(box):
-    with _translating_lock:
-        global _translating
-        _translating = True
-    end_x, end_y = box[4], box[5]
-    hide_popup()
-    text = clipboard.get_selected_text()
-    if not text:
-        hide_popup()
-        _show_toast(COPY_FAILED_TEXT)
-        return None
-    if not _model_is_ready():
-        state = _model_status_text()
-        if state is not None:
-            _show_toast(state)
-        _ensure_popup()
-    elif _should_show_status(TRANSLATING_TEXT):
-        show_cover()
-        _show_placeholder(end_x, end_y)
-    else:
-        _ensure_popup()
-    return text
-
-
-def _end_translation():
-    with _translating_lock:
-        global _translating
-        _translating = False
-
-
-def _wait_for_model():
-    """Block until the translation model is ready, so queued translations do
-    not run while the model is still downloading/initializing. Runs on the
-    worker thread, never on the mouse-hook thread."""
-    try:
-        mod = _get_translator()
-        mod.reset_cancel()
-        if mod.needs_reload():
-            mod.preload()
-        while not mod.is_ready():
-            if mod.load_failed():
-                return False
-            if _cancel_event.is_set():
-                return False
-            time.sleep(MODEL_WAIT_POLL_SECONDS)
-        return True
-    except Exception:
-        return True
-
-
-def request_box(x, y, width, height, end_x, end_y):
-    _cancel_translation()
-    _box_queue.queue.clear()
-    _box_queue.put((int(x), int(y), int(width), int(height), int(end_x), int(end_y)))
-
-
-def _handle_box(box, text):
-    end_x, end_y = box[4], box[5]
-    translated = _translate_text(text)
-    if not translated or _cancel_event.is_set():
-        hide_popup()
-        if not _cancel_event.is_set():
-            _show_toast(TRANSLATION_FAILED_TEXT)
-        return
-    if _current_popup is not None:
-        _current_popup.show_translation(translated, None, (end_x, end_y))
-        _push_history(translated)
-
-
-def _translate_text(text):
-    try:
-        translated = _get_translator().translate(text)
-    except Exception as e:
-        log(f'translate error: {e!r}')
-        return None
-    if not translated or translated.startswith('[Klaida]'):
-        return None
-    return translated
-
-
-def _show_placeholder(end_x, end_y, text=TRANSLATING_TEXT):
+def _show_placeholder(end_x, end_y, text=messages.TRANSLATING_TEXT):
     if _current_popup is None or not _cover_visible:
         return
     _current_popup.show_status(text, None, (end_x, end_y))
@@ -499,58 +369,22 @@ def _ensure_popup():
         _current_popup.start()
 
 
-def _cancel_translation():
-    _cancel_event.set()
-    mod = _translator_mod
-    if mod is not None:
-        try:
-            mod.cancel()
-        except Exception:
-            pass
-
-
 def cancel_work():
-    _cancel_translation()
-    _box_queue.queue.clear()
+    translation_worker.cancel_all()
 
 
 def handle_edited_text(text):
-    _update_current_history(text)
-
-
-def _push_history(text):
-    global _current_history_index
-    _current_history_index = 0
-    with _history_lock:
-        if _history and _history[0] == text:
-            return
-        _history.insert(0, text)
-        del _history[HISTORY_MAX:]
-
-
-def _update_current_history(text):
-    global _current_history_index
-    with _history_lock:
-        if not _history:
-            return
-        idx = _current_history_index
-        if idx < len(_history) and _history[idx] != text:
-            _history[idx] = text
+    history.update_current(text)
 
 
 def handle_history(num):
-    global _current_history_index
     if num < 1 or num > HISTORY_MAX:
         return
-    with _history_lock:
-        if len(_history) < num:
-            text = None
-        else:
-            text = _history[num - 1]
+    text = history.get(num)
     if text is None:
-        _show_toast(HISTORY_NOT_FOUND_TEXT.format(num=num))
+        _show_toast(messages.HISTORY_NOT_FOUND_TEXT.format(num=num))
         return
-    _current_history_index = num - 1
+    history.set_current_index(num - 1)
     if _current_popup is not None:
         _current_popup.show_history(text)
 
@@ -565,6 +399,16 @@ def _show_toast(text):
         popup.destroy()
 
     threading.Timer(TOAST_DURATION_SECONDS, _finish).start()
+
+
+translation_worker = TranslationWorker(
+    clipboard=clipboard,
+    translator=translator_accessor,
+    popup=PopupController(),
+    toast=_show_toast,
+    history=history,
+    status_text=_model_status_text,
+)
 
 
 def toggle_setting(settings, key):

@@ -1,21 +1,15 @@
-import ctypes
 import os
 import sys
-from ctypes import wintypes
 
 import win32api
 import win32con
 import win32gui
 
 from applog import log
-
-WH_MOUSE_LL = 14
-WM_LBUTTONDOWN = 0x0201
-WM_LBUTTONUP = 0x0202
+from mouse_hook import LowLevelMouseHook
 
 ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'selate.ico')
 TOOLTIP_TEXT = "Selate (Ctrl + tempti pele)"
-HOOK_MIN_DRAG = 2
 
 CMD_STARTUP = 1002
 CMD_QUIT = 1003
@@ -37,37 +31,6 @@ NOTIFICATION_ITEMS = [
 
 HISTORY_PREVIEW_LIMIT = 40
 HISTORY_PREVIEW_SUFFIX = '...'
-
-
-class _POINT(ctypes.Structure):
-    _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
-
-
-class _MSLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [
-        ('pt', _POINT),
-        ('mouseData', wintypes.DWORD),
-        ('flags', wintypes.DWORD),
-        ('time', wintypes.DWORD),
-        ('dwExtraInfo', ctypes.c_size_t),
-    ]
-
-
-_HOOKPROC = ctypes.WINFUNCTYPE(
-    wintypes.LPARAM, wintypes.INT, wintypes.WPARAM, wintypes.LPARAM
-)
-
-_user32 = ctypes.WinDLL('user32', use_last_error=True)
-_user32.SetWindowsHookExW.restype = wintypes.HHOOK
-_user32.SetWindowsHookExW.argtypes = [
-    wintypes.INT, _HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD
-]
-_user32.CallNextHookEx.restype = wintypes.LPARAM
-_user32.CallNextHookEx.argtypes = [
-    wintypes.HHOOK, wintypes.INT, wintypes.WPARAM, wintypes.LPARAM
-]
-_user32.UnhookWindowsHookEx.restype = wintypes.BOOL
-_user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
 
 
 def _load_icon():
@@ -114,9 +77,7 @@ class TrayIcon:
         self.on_select_end = None
         self.history_size = history_size
         self.hwnd = None
-        self._hook_handle = None
-        self._hook_proc = None
-        self._drag_start = None
+        self._hook = None
 
     def create(self):
         wc = win32gui.WNDCLASS()
@@ -161,21 +122,19 @@ class TrayIcon:
         win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (self.hwnd, 0))
 
     def _install_mouse_hook(self):
-        try:
-            self._hook_proc = _HOOKPROC(self._mouse_proc)
-            self._hook_handle = _user32.SetWindowsHookExW(
-                WH_MOUSE_LL, self._hook_proc, None, 0
-            )
-            if not self._hook_handle:
-                log(f'mouse hook failed: error {ctypes.get_last_error()}')
-        except Exception as e:
-            self._hook_handle = None
-            log(f'mouse hook failed: {e!r}')
+        if self._hook is not None:
+            return
+        self._hook = LowLevelMouseHook(
+            on_drag_start=lambda: self._invoke(self.on_select_start, 'hook: select start error'),
+            on_drag_end=lambda box_sent: self._invoke(self.on_select_end, 'hook: select end error', box_sent),
+            on_box=lambda x, y, w, h, ex, ey: self._invoke(self.on_box, 'hook: box error', x, y, w, h, ex, ey),
+        )
+        self._hook.install()
 
     def _uninstall_mouse_hook(self):
-        if self._hook_handle:
-            _user32.UnhookWindowsHookEx(self._hook_handle)
-            self._hook_handle = None
+        if self._hook is not None:
+            self._hook.uninstall()
+            self._hook = None
 
     def _invoke(self, callback, where, *args):
         if callback is None:
@@ -184,43 +143,6 @@ class TrayIcon:
             callback(*args)
         except Exception as e:
             log(f'{where}: {e!r}')
-
-    def _mouse_proc(self, nCode, wParam, lParam):
-        try:
-            if nCode >= 0:
-                if wParam == WM_LBUTTONDOWN:
-                    self._on_mouse_down(lParam)
-                elif wParam == WM_LBUTTONUP:
-                    self._on_mouse_up(lParam)
-        except Exception as e:
-            log(f'hook error: {e!r}')
-        if self._hook_handle:
-            return _user32.CallNextHookEx(self._hook_handle, nCode, wParam, lParam)
-        return 0
-
-    def _on_mouse_down(self, lParam):
-        ctrl = win32api.GetAsyncKeyState(win32con.VK_CONTROL) & 0x8000
-        if not ctrl:
-            return
-        info = _MSLLHOOKSTRUCT.from_address(lParam)
-        self._drag_start = (info.pt.x, info.pt.y)
-        self._invoke(self.on_select_start, 'hook: select start error')
-
-    def _on_mouse_up(self, lParam):
-        if self._drag_start is None:
-            return
-        info = _MSLLHOOKSTRUCT.from_address(lParam)
-        end = (info.pt.x, info.pt.y)
-        start = self._drag_start
-        self._drag_start = None
-        x = min(start[0], end[0])
-        y = min(start[1], end[1])
-        width = abs(end[0] - start[0])
-        height = abs(end[1] - start[1])
-        box_sent = max(width, height) >= HOOK_MIN_DRAG
-        self._invoke(self.on_select_end, 'hook: select end error', box_sent)
-        if box_sent:
-            self._invoke(self.on_box, 'hook: box error', x, y, width, height, end[0], end[1])
 
     def _wnd_proc(self, hwnd, msg, wparam, lparam):
         try:

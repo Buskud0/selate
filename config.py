@@ -1,8 +1,8 @@
 import json
 import os
-import sys
 import threading
-import winreg
+
+import startup
 
 
 def get_data_dir():
@@ -12,9 +12,6 @@ def get_data_dir():
 
 CONFIG_DIR = get_data_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
-
-STARTUP_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-STARTUP_REGISTRY_NAME = "Selate"
 
 DEFAULT_CONFIG = {
     'run_at_startup': False,
@@ -66,34 +63,4 @@ def _write(config):
     os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
-    _sync_startup(config.get('run_at_startup', False))
-
-
-def _sync_startup(enabled):
-    if enabled:
-        path = _get_exe_path()
-        if not path:
-            return
-        try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE
-            ) as key:
-                winreg.SetValueEx(
-                    key, STARTUP_REGISTRY_NAME, 0, winreg.REG_SZ, path
-                )
-        except OSError:
-            pass
-    else:
-        try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_PATH, 0, winreg.KEY_SET_VALUE
-            ) as key:
-                winreg.DeleteValue(key, STARTUP_REGISTRY_NAME)
-        except OSError:
-            pass
-
-
-def _get_exe_path():
-    if getattr(sys, 'frozen', False):
-        return sys.executable
-    return os.path.abspath(sys.argv[0])
+    startup.sync(config.get('run_at_startup', False))

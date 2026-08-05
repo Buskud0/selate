@@ -31,12 +31,12 @@ ARC_STEPS = 6
 
 def _create_window(topmost=True, no_activate=False):
     window = tk.Tk()
+    window.withdraw()
     window.overrideredirect(True)
     window.attributes('-topmost', topmost)
     window.attributes('-alpha', WINDOW_ALPHA)
     window.attributes('-transparentcolor', MAGIC_COLOR)
     window.configure(bg=BACKGROUND)
-    window.withdraw()
     _enable_blur(window)
     if no_activate:
         _disable_activate(window)

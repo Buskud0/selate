@@ -11,9 +11,8 @@ from popup_draw import (
 )
 from popup_editor import PopupEditor
 from popup_geom import (
-    DEFAULT_WIDTH, EMPTY_POPUP_HEIGHT, EMPTY_POPUP_WIDTH,
-    MIN_HEIGHT, MIN_WIDTH, SCROLL_STEP, TEXT_PADDING,
-    _center, _clamp, _corner_at, _count_lines, _default_translation_size,
+    DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH, SCROLL_STEP, TEXT_PADDING,
+    _clamp, _corner_at, _count_lines, _default_translation_size,
     _fit_text_size, _place_at, _place_se, _resize_cursor, _size_for_text,
     _target_work_area, _text_wrap_width, _wrap_width,
 )
@@ -376,14 +375,6 @@ class CoverPopup:
         self._scroll_offset = 0
         self._scroll_max = 0
         self._text_items = []
-        _center(self._window, EMPTY_POPUP_WIDTH, EMPTY_POPUP_HEIGHT)
-        self._window.update_idletasks()
-        _draw_box(
-            self._canvas, '',
-            _make_font(self._window, self._font_size),
-            EMPTY_POPUP_WIDTH, EMPTY_POPUP_HEIGHT, 'center', self._grips,
-        )
-        self._window.deiconify()
 
     def _show_now(self, text, pos='center', anchor=None, locked=False, keep_pos=False):
         if not text or not text.strip():
