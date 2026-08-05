@@ -7,7 +7,7 @@ Selate yra „Windows“ darbalaukio programa, skirta greitai išversti pasirink
 Naujausia paruošta versija yra Releases skiltyje.
 
 1. Eikite į [Releases.](https://github.com/Buskud0/selate/releases/)
-2. Atsisiųskite pagrindinį failą Selate.exe.
+2. Atsisiųskite pagrindinį failą Selate.exe
 3. Paleiskite programą
 
 ## Pagrindinės funkcijos
