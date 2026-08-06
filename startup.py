@@ -11,9 +11,10 @@ STARTUP_APPROVED_PATH = (
     r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 )
 
-# First byte of the StartupApproved value: 0x03 = disabled, 0x07 = enabled
-# (the value is 12 bytes: status + FILETIME + padding).
-_ENABLED_STATUS = 0x07
+# First byte of the StartupApproved value: 0x02/0x03 = disabled, 0x06 = enabled
+# (confirmed against known-enabled entries on Windows 11; 0x07 is not read
+# as enabled). The value is 12 bytes: status + 3 zero bytes + FILETIME.
+_ENABLED_STATUS = 0x06
 
 
 def sync(enabled):
@@ -63,7 +64,7 @@ def _get_exe_path():
 def _approved_data(status):
     ft = ctypes.c_ulonglong()
     ctypes.windll.kernel32.GetSystemTimeAsFileTime(ctypes.byref(ft))
-    return bytes([status]) + int(ft.value).to_bytes(8, 'little') + b'\x00\x00\x00'
+    return bytes([status]) + b'\x00\x00\x00' + int(ft.value).to_bytes(8, 'little')
 
 
 def _set_approved(data):
