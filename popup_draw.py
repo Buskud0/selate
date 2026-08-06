@@ -36,7 +36,7 @@ def _create_window(topmost=True, no_activate=False):
     window.attributes('-topmost', topmost)
     window.attributes('-alpha', WINDOW_ALPHA)
     window.attributes('-transparentcolor', MAGIC_COLOR)
-    window.configure(bg=BACKGROUND)
+    window.configure(bg=MAGIC_COLOR)
     _enable_blur(window)
     if no_activate:
         _disable_activate(window)

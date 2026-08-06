@@ -88,6 +88,8 @@ class CoverPopup:
     def _on_left_press(self, event):
         if self._window is None or self._editor is not None or self._locked:
             return
+        if self._resizing:
+            return
         mode = _corner_at(event.x, event.y, self._window.winfo_width(), self._window.winfo_height())
         if mode:
             self._resizing = mode
@@ -211,10 +213,12 @@ class CoverPopup:
         return best
 
     def _on_release(self, event):
-        if self._resizing:
-            self._end_resize_surface()
-        self._resizing = None
-        self._dragging = False
+        try:
+            if self._resizing:
+                self._end_resize_surface()
+        finally:
+            self._resizing = None
+            self._dragging = False
 
     def _begin_resize_surface(self):
         if self._window is None or self._canvas is None:
@@ -228,14 +232,37 @@ class CoverPopup:
     def _end_resize_surface(self):
         if self._window is None or self._canvas is None:
             return
-        try:
-            self._window.attributes('-transparentcolor', MAGIC_COLOR)
-        except Exception:
-            pass
         self._canvas.config(bg=MAGIC_COLOR)
         width = self._window.winfo_width()
         height = self._window.winfo_height()
         self._draw_content(width, height)
+        try:
+            self._window.update()
+        except Exception:
+            pass
+        try:
+            self._window.attributes('-transparentcolor', MAGIC_COLOR)
+        except Exception:
+            pass
+        try:
+            self._window.update()
+        except Exception:
+            pass
+
+    def _restore_surface(self):
+        """Force the normal transparent surface so no stuck resize state survives."""
+        if self._window is None or self._canvas is None:
+            return
+        try:
+            self._window.attributes('-transparentcolor', MAGIC_COLOR)
+        except Exception:
+            pass
+        try:
+            self._canvas.config(bg=MAGIC_COLOR)
+        except Exception:
+            pass
+        self._resizing = None
+        self._dragging = False
 
     def _on_edit_start(self, event):
         if self._window is None or self._editor is not None or not self._current_text or self._locked:
@@ -379,6 +406,7 @@ class CoverPopup:
     def _show_now(self, text, pos='center', anchor=None, locked=False, keep_pos=False):
         if not text or not text.strip():
             return
+        self._restore_surface()
         if not config.load().get('save_font_size', False):
             self._font_size = DEFAULT_FONT_SIZE
         self._locked = locked
@@ -418,6 +446,7 @@ class CoverPopup:
             self._on_hidden()
 
     def _withdraw(self):
+        self._restore_surface()
         if self._editor is not None:
             self._editor.close()
             self._editor = None
